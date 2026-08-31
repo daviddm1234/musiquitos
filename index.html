@@ -5,33 +5,32 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Musiquitos</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Firebase SDKs (Versión modular ligera) -->
+    <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-        // ==========================================
-        // PEGA AQUÍ TUS CREDENCIALES DE FIREBASE (Paso 2)
-        // ==========================================
-const firebaseConfig = {
-apiKey: "AIzaSyCZsiOVc-wq6tDl3mHDVwo6nTRhx25-Qw8",
-authDomain: "musiquitos-e7351.firebaseapp.com",
-projectId: "musiquitos-e7351",
-storageBucket: "musiquitos-e7351.firebasestorage.app",
-messagingSenderId: "155903440836",
-appId: "1:155903440836:web:f2f1faeb2afaa741d29691"
-};
+        // Configuración de tu proyecto Musiquitos
+        const firebaseConfig = {
+          apiKey: "AIzaSyCZsiOVc-wq6tDl3mHDVwo6nTRhx25-Qw8",
+          authDomain: "musiquitos-e7351.firebaseapp.com",
+          projectId: "musiquitos-e7351",
+          storageBucket: "musiquitos-e7351.firebasestorage.app",
+          messagingSenderId: "155903440836",
+          appId: "1:155903440836:web:f2f1faeb2afaa741d29691"
+        };
 
-        // Inicializar Firebase
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
         const docRef = doc(db, "suscripcion", "datos_grupo");
 
-        // Datos por defecto si la base de datos está vacía
+        // Avatar por defecto: Macaco tipo Space Invader (👾)
+        const DEFAULT_AVATAR = "👾";
+
         const defaultData = {
             users: [
-                { name: "David", avatar: "👤", history: [{ title: "Enero", paid: true }, { title: "Febrero", paid: false }] },
-                { name: "Amigo 1", avatar: "👤", history: [{ title: "Enero", paid: false }, { title: "Febrero", paid: false }] }
+                { name: "David", avatar: DEFAULT_AVATAR, history: [{ title: "Enero", paid: true }, { title: "Febrero", paid: false }] },
+                { name: "Amigo 1", avatar: DEFAULT_AVATAR, history: [{ title: "Enero", paid: false }, { title: "Febrero", paid: false }] }
             ]
         };
 
@@ -45,23 +44,20 @@ appId: "1:155903440836:web:f2f1faeb2afaa741d29691"
             if (docSnap.exists()) {
                 currentDb = docSnap.data();
             } else {
-                // Si no existe el documento, lo creamos con los datos por defecto
                 setDoc(docRef, defaultData);
             }
             render();
         });
 
-        // Función global para guardar en Firebase
         window.saveDataToFirebase = async function() {
             try {
                 await setDoc(docRef, currentDb);
             } catch (e) {
                 console.error("Error al guardar en Firebase: ", e);
-                alert("Hubo un error al sincronizar con la nube.");
+                alert("Hubo un error al guardar los datos.");
             }
         };
 
-        // Exponer funciones al ámbito global para los botones HTML
         window.handleAdminAccess = function() {
             if (!isAdmin) {
                 const pin = prompt("Introduce el PIN de Administrador:");
@@ -71,7 +67,7 @@ appId: "1:155903440836:web:f2f1faeb2afaa741d29691"
                     document.getElementById('admin-btn').textContent = "Cerrar Admin";
                     document.getElementById('admin-btn').classList.replace('bg-slate-900', 'bg-rose-600');
                 } else if (pin !== null) {
-                    alert("Contraseña incorrecta.");
+                    alert("PIN incorrecto.");
                 }
             } else {
                 isAdmin = false;
@@ -95,7 +91,7 @@ appId: "1:155903440836:web:f2f1faeb2afaa741d29691"
             const input = document.getElementById('new-user-name');
             if (!input.value.trim()) return;
             const cycles = currentDb.users.length > 0 ? currentDb.users[0].history.map(h => ({ title: h.title, paid: false })) : [];
-            currentDb.users.push({ name: input.value.trim(), avatar: "👤", history: cycles });
+            currentDb.users.push({ name: input.value.trim(), avatar: DEFAULT_AVATAR, history: cycles });
             input.value = '';
             window.saveDataToFirebase();
         };
@@ -104,7 +100,7 @@ appId: "1:155903440836:web:f2f1faeb2afaa741d29691"
             const dataStr = JSON.stringify(currentDb, null, 2);
             const email = "davidenpelotas@hotmail.com";
             const subject = encodeURIComponent("Backup Musiquitos");
-            const body = encodeURIComponent("Copia de seguridad de los pagos:\n\n" + dataStr);
+            const body = encodeURIComponent("Copia de seguridad de los datos de pago:\n\n" + dataStr);
             window.location.href = `mailto:${email}?subject=${subject}&body=${body}`;
         };
 
@@ -144,13 +140,19 @@ appId: "1:155903440836:web:f2f1faeb2afaa741d29691"
                 user.history.forEach((h, i) => { if(h.paid) lastPaidIdx = i; });
 
                 const blocksHtml = user.history.map((h, i) => {
-                    const isAvatarHere = (i === lastPaidIdx);
-                    const blockColor = h.paid ? 'bg-emerald-550 text-emerald-900 bg-emerald-100' : 'bg-purple-100 text-purple-900';
+                    // Si no ha pagado nada, el avatar se coloca en el primer bloque (índice 0)
+                    const isAvatarHere = (i === lastPaidIdx) || (lastPaidIdx === -1 && i === 0);
+                    const blockColor = h.paid ? 'bg-emerald-100 text-emerald-900' : 'bg-purple-100 text-purple-900';
                     const blockBorder = h.paid ? 'border-emerald-200' : 'border-purple-200';
+                    const avatarContent = user.avatar || DEFAULT_AVATAR;
+
+                    const avatarHtml = avatarContent.startsWith('http') || avatarContent.endsWith('.jpg') || avatarContent.endsWith('.png')
+                        ? `<img src="${avatarContent}" class="w-12 h-12 rounded-full border-2 border-white absolute top-0 z-10 object-cover bg-slate-900 shadow-md">`
+                        : `<div class="w-12 h-12 rounded-full border-2 border-white absolute top-0 z-10 flex items-center justify-center bg-slate-900 text-white text-xl shadow-md">${avatarContent}</div>`;
                     
                     return `
                     <div class="flex flex-col items-center justify-end min-w-[110px] h-[140px] relative px-1">
-                        ${isAvatarHere ? `<div class="w-12 h-12 rounded-full border-2 border-white absolute top-0 z-10 flex items-center justify-center bg-slate-900 text-white text-xl shadow-md">${user.avatar || '👤'}</div>` : ''}
+                        ${isAvatarHere ? avatarHtml : ''}
                         <div class="w-full h-14 ${blockColor} border-2 ${blockBorder} rounded-xl flex items-center justify-center text-sm font-semibold px-2 truncate relative shadow-sm">
                             ${h.title}
                             ${!h.paid ? '<div class="absolute inset-0 bg-black opacity-5 rounded-xl"></div>' : ''}
@@ -158,20 +160,11 @@ appId: "1:155903440836:web:f2f1faeb2afaa741d29691"
                     </div>`;
                 }).join('');
 
-                const isAtStart = (lastPaidIdx === -1);
-                const startLine = `
-                    <div class="flex flex-col items-center justify-end min-w-[70px] h-[140px] relative px-1 mr-2">
-                         ${isAtStart ? `<div class="w-12 h-12 rounded-full border-2 border-white absolute top-0 z-10 flex items-center justify-center bg-slate-900 text-white text-xl shadow-md">${user.avatar || '👤'}</div>` : ''}
-                         <div class="h-14 w-2 bg-slate-300 border-r-2 border-dashed border-slate-400 rounded-t-lg"></div>
-                    </div>
-                `;
-
                 container.innerHTML += `
                     <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col md:flex-row gap-5 items-center">
                         <div class="font-bold text-slate-800 text-lg min-w-[140px]">${user.name}</div>
                         <div class="flex-1 overflow-x-auto w-full pb-2">
                             <div class="flex items-end border-b-2 border-slate-200 pb-2 min-w-max px-2">
-                                ${startLine}
                                 ${blocksHtml || '<span class="text-sm text-slate-400 h-14 flex items-center">Sin bloques generados</span>'}
                             </div>
                         </div>
@@ -207,8 +200,8 @@ appId: "1:155903440836:web:f2f1faeb2afaa741d29691"
                         <input type="text" id="edit-name-${selectedUserIndex}" value="${user.name}" class="px-3 py-1.5 rounded-lg border border-slate-300 text-sm w-36 outline-none focus:ring-2 focus:ring-indigo-500">
                     </div>
                     <div class="flex-1 min-w-[150px]">
-                        <label class="text-xs block font-bold text-slate-600 mb-1">Avatar (Emoji o URL)</label>
-                        <input type="text" id="edit-img-${selectedUserIndex}" value="${user.avatar || '👤'}" class="px-3 py-1.5 rounded-lg border border-slate-300 text-sm w-full outline-none focus:ring-2 focus:ring-indigo-500">
+                        <label class="text-xs block font-bold text-slate-600 mb-1">Avatar (Emoji o nombre de imagen)</label>
+                        <input type="text" id="edit-img-${selectedUserIndex}" value="${user.avatar || DEFAULT_AVATAR}" class="px-3 py-1.5 rounded-lg border border-slate-300 text-sm w-full outline-none focus:ring-2 focus:ring-indigo-500">
                     </div>
                     <button onclick="updateUserHeader(${selectedUserIndex})" class="bg-indigo-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-indigo-700 transition">Guardar</button>
                 </div>
