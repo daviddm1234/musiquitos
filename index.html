@@ -3,28 +3,264 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Control de Suscripción Grupo</title>
+    <title>Musiquitos</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Firebase SDKs (Versión modular ligera) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        // ==========================================
+        // PEGA AQUÍ TUS CREDENCIALES DE FIREBASE (Paso 2)
+        // ==========================================
+const firebaseConfig = {
+apiKey: "AIzaSyCZsiOVc-wq6tDl3mHDVwo6nTRhx25-Qw8",
+authDomain: "musiquitos-e7351.firebaseapp.com",
+projectId: "musiquitos-e7351",
+storageBucket: "musiquitos-e7351.firebasestorage.app",
+messagingSenderId: "155903440836",
+appId: "1:155903440836:web:f2f1faeb2afaa741d29691"
+};
+
+        // Inicializar Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const docRef = doc(db, "suscripcion", "datos_grupo");
+
+        // Datos por defecto si la base de datos está vacía
+        const defaultData = {
+            users: [
+                { name: "David", avatar: "👤", history: [{ title: "Enero", paid: true }, { title: "Febrero", paid: false }] },
+                { name: "Amigo 1", avatar: "👤", history: [{ title: "Enero", paid: false }, { title: "Febrero", paid: false }] }
+            ]
+        };
+
+        let currentDb = defaultData;
+        const ADMIN_PIN = "1234";
+        let isAdmin = false;
+        let selectedUserIndex = null;
+
+        // Escuchar cambios en tiempo real desde Firebase
+        onSnapshot(docRef, (docSnap) => {
+            if (docSnap.exists()) {
+                currentDb = docSnap.data();
+            } else {
+                // Si no existe el documento, lo creamos con los datos por defecto
+                setDoc(docRef, defaultData);
+            }
+            render();
+        });
+
+        // Función global para guardar en Firebase
+        window.saveDataToFirebase = async function() {
+            try {
+                await setDoc(docRef, currentDb);
+            } catch (e) {
+                console.error("Error al guardar en Firebase: ", e);
+                alert("Hubo un error al sincronizar con la nube.");
+            }
+        };
+
+        // Exponer funciones al ámbito global para los botones HTML
+        window.handleAdminAccess = function() {
+            if (!isAdmin) {
+                const pin = prompt("Introduce el PIN de Administrador:");
+                if (pin === ADMIN_PIN) {
+                    isAdmin = true;
+                    document.getElementById('admin-panel').classList.remove('hidden');
+                    document.getElementById('admin-btn').textContent = "Cerrar Admin";
+                    document.getElementById('admin-btn').classList.replace('bg-slate-900', 'bg-rose-600');
+                } else if (pin !== null) {
+                    alert("Contraseña incorrecta.");
+                }
+            } else {
+                isAdmin = false;
+                selectedUserIndex = null;
+                document.getElementById('admin-panel').classList.add('hidden');
+                document.getElementById('admin-btn').textContent = "Modo Admin";
+                document.getElementById('admin-btn').classList.replace('bg-rose-600', 'bg-slate-900');
+            }
+            render();
+        };
+
+        window.addGlobalCycle = function() {
+            const input = document.getElementById('cycle-name');
+            if (!input.value.trim()) return;
+            currentDb.users.forEach(u => u.history.push({ title: input.value.trim(), paid: false }));
+            input.value = '';
+            window.saveDataToFirebase();
+        };
+
+        window.addUser = function() {
+            const input = document.getElementById('new-user-name');
+            if (!input.value.trim()) return;
+            const cycles = currentDb.users.length > 0 ? currentDb.users[0].history.map(h => ({ title: h.title, paid: false })) : [];
+            currentDb.users.push({ name: input.value.trim(), avatar: "👤", history: cycles });
+            input.value = '';
+            window.saveDataToFirebase();
+        };
+
+        window.backupData = function() {
+            const dataStr = JSON.stringify(currentDb, null, 2);
+            const email = "davidenpelotas@hotmail.com";
+            const subject = encodeURIComponent("Backup Musiquitos");
+            const body = encodeURIComponent("Copia de seguridad de los pagos:\n\n" + dataStr);
+            window.location.href = `mailto:${email}?subject=${subject}&body=${body}`;
+        };
+
+        window.selectUser = function(idx) {
+            selectedUserIndex = idx;
+            render();
+        };
+
+        window.updateUserHeader = function(idx) {
+            currentDb.users[idx].name = document.getElementById(`edit-name-${idx}`).value;
+            currentDb.users[idx].avatar = document.getElementById(`edit-img-${idx}`).value;
+            window.saveDataToFirebase();
+        };
+
+        window.updateBlockTitle = function(uIdx, hIdx) {
+            const newTitle = document.getElementById(`edit-title-${uIdx}-${hIdx}`).value;
+            currentDb.users[uIdx].history[hIdx].title = newTitle;
+            window.saveDataToFirebase();
+        };
+
+        window.togglePayment = function(uIdx, hIdx) {
+            currentDb.users[uIdx].history[hIdx].paid = !currentDb.users[uIdx].history[hIdx].paid;
+            window.saveDataToFirebase();
+        };
+
+        window.deleteBlock = function(uIdx, hIdx) {
+            currentDb.users[uIdx].history.splice(hIdx, 1);
+            window.saveDataToFirebase();
+        };
+
+        function render() {
+            const container = document.getElementById('users-container');
+            container.innerHTML = '';
+
+            currentDb.users.forEach((user) => {
+                let lastPaidIdx = -1;
+                user.history.forEach((h, i) => { if(h.paid) lastPaidIdx = i; });
+
+                const blocksHtml = user.history.map((h, i) => {
+                    const isAvatarHere = (i === lastPaidIdx);
+                    const blockColor = h.paid ? 'bg-emerald-550 text-emerald-900 bg-emerald-100' : 'bg-purple-100 text-purple-900';
+                    const blockBorder = h.paid ? 'border-emerald-200' : 'border-purple-200';
+                    
+                    return `
+                    <div class="flex flex-col items-center justify-end min-w-[110px] h-[140px] relative px-1">
+                        ${isAvatarHere ? `<div class="w-12 h-12 rounded-full border-2 border-white absolute top-0 z-10 flex items-center justify-center bg-slate-900 text-white text-xl shadow-md">${user.avatar || '👤'}</div>` : ''}
+                        <div class="w-full h-14 ${blockColor} border-2 ${blockBorder} rounded-xl flex items-center justify-center text-sm font-semibold px-2 truncate relative shadow-sm">
+                            ${h.title}
+                            ${!h.paid ? '<div class="absolute inset-0 bg-black opacity-5 rounded-xl"></div>' : ''}
+                        </div>
+                    </div>`;
+                }).join('');
+
+                const isAtStart = (lastPaidIdx === -1);
+                const startLine = `
+                    <div class="flex flex-col items-center justify-end min-w-[70px] h-[140px] relative px-1 mr-2">
+                         ${isAtStart ? `<div class="w-12 h-12 rounded-full border-2 border-white absolute top-0 z-10 flex items-center justify-center bg-slate-900 text-white text-xl shadow-md">${user.avatar || '👤'}</div>` : ''}
+                         <div class="h-14 w-2 bg-slate-300 border-r-2 border-dashed border-slate-400 rounded-t-lg"></div>
+                    </div>
+                `;
+
+                container.innerHTML += `
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col md:flex-row gap-5 items-center">
+                        <div class="font-bold text-slate-800 text-lg min-w-[140px]">${user.name}</div>
+                        <div class="flex-1 overflow-x-auto w-full pb-2">
+                            <div class="flex items-end border-b-2 border-slate-200 pb-2 min-w-max px-2">
+                                ${startLine}
+                                ${blocksHtml || '<span class="text-sm text-slate-400 h-14 flex items-center">Sin bloques generados</span>'}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            if (isAdmin) {
+                const btnContainer = document.getElementById('user-buttons');
+                btnContainer.innerHTML = currentDb.users.map((u, i) => `
+                    <button onclick="selectUser(${i})" class="px-4 py-2 rounded-xl text-sm font-medium transition ${selectedUserIndex === i ? 'bg-indigo-600 text-white' : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'}">
+                        ${u.name}
+                    </button>
+                `).join('');
+                renderUserEditor();
+            }
+        }
+
+        function renderUserEditor() {
+            const editor = document.getElementById('user-editor');
+            if (selectedUserIndex === null || !currentDb.users[selectedUserIndex]) {
+                editor.classList.add('hidden');
+                return;
+            }
+
+            editor.classList.remove('hidden');
+            const user = currentDb.users[selectedUserIndex];
+
+            const userHeaderHtml = `
+                <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-wrap gap-3 items-end">
+                    <div>
+                        <label class="text-xs block font-bold text-slate-600 mb-1">Nombre</label>
+                        <input type="text" id="edit-name-${selectedUserIndex}" value="${user.name}" class="px-3 py-1.5 rounded-lg border border-slate-300 text-sm w-36 outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                    <div class="flex-1 min-w-[150px]">
+                        <label class="text-xs block font-bold text-slate-600 mb-1">Avatar (Emoji o URL)</label>
+                        <input type="text" id="edit-img-${selectedUserIndex}" value="${user.avatar || '👤'}" class="px-3 py-1.5 rounded-lg border border-slate-300 text-sm w-full outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                    <button onclick="updateUserHeader(${selectedUserIndex})" class="bg-indigo-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-indigo-700 transition">Guardar</button>
+                </div>
+            `;
+
+            const blocks = user.history.map((h, hIdx) => `
+                <div class="flex flex-wrap items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-200 gap-3 text-sm">
+                    <div class="flex gap-2 items-center">
+                        <input type="text" id="edit-title-${selectedUserIndex}-${hIdx}" value="${h.title}" class="w-28 px-2 py-1 rounded border border-slate-300 outline-none">
+                        <button onclick="updateBlockTitle(${selectedUserIndex}, ${hIdx})" class="bg-amber-100 text-amber-800 px-2.5 py-1 rounded text-xs font-semibold hover:bg-amber-200 transition">Renombrar</button>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="togglePayment(${selectedUserIndex}, ${hIdx})" class="px-3 py-1 rounded text-xs font-semibold transition ${h.paid ? 'bg-emerald-100 text-emerald-700' : 'bg-purple-100 text-purple-700'}">
+                            ${h.paid ? 'Marcar Pendiente' : 'Marcar Pagado'}
+                        </button>
+                        <button onclick="deleteBlock(${selectedUserIndex}, ${hIdx})" class="text-rose-500 hover:text-rose-700 text-xs px-2 py-1 font-semibold">Eliminar</button>
+                    </div>
+                </div>
+            `).join('');
+
+            editor.innerHTML = `
+                <h4 class="font-bold text-slate-800 text-base mb-3">Editando a: <span class="text-indigo-600">${user.name}</span></h4>
+                ${userHeaderHtml}
+                <div class="space-y-2 mt-4">
+                    <h5 class="font-bold text-slate-700 text-sm mb-2">Bloques de Pago:</h5>
+                    ${blocks || '<p class="text-xs text-slate-500">Sin bloques.</p>'}
+                </div>
+            `;
+        }
+    </script>
 </head>
 <body class="bg-slate-100 text-slate-800 font-sans min-h-screen p-4 md:p-8">
 
     <div class="max-w-4xl mx-auto space-y-6">
         <!-- Header -->
-        <header class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex justify-between items-center">
-            <div>
-                <h1 class="text-2xl font-bold text-slate-900">💳 Control de Pagos</h1>
-                <p class="text-sm text-slate-500">Estado de suscripción compartida</p>
+        <header class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex justify-between items-center">
+            <div class="flex items-center gap-3">
+                <span class="text-3xl">🎵</span>
+                <h1 class="text-2xl font-bold text-slate-900">Musiquitos</h1>
             </div>
             <button onclick="handleAdminAccess()" id="admin-btn" class="bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-slate-800 transition">
-                Acceso Admin
+                Modo Admin
             </button>
         </header>
 
         <!-- Admin Panel -->
-        <div id="admin-panel" class="hidden bg-white rounded-2xl p-6 shadow-md border border-indigo-200 space-y-6">
+        <div id="admin-panel" class="hidden bg-white p-6 rounded-2xl shadow-md border border-indigo-200 space-y-6">
             <div class="flex justify-between items-center border-b pb-4">
                 <h2 class="text-lg font-bold text-indigo-900">🛠️ Panel de Administración</h2>
-                <span class="text-xs bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full font-medium">Modo Edición Activo</span>
+                <button onclick="backupData()" class="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-blue-700 transition">
+                    📧 Enviar Backup
+                </button>
             </div>
 
             <!-- Global Actions -->
@@ -32,8 +268,8 @@
                 <div class="bg-slate-50 p-4 rounded-xl border border-slate-200">
                     <h3 class="font-semibold text-sm text-slate-700 mb-2">1. Crear Nuevo Período Global</h3>
                     <div class="flex gap-2">
-                        <input type="text" id="cycle-name" placeholder="Ej: Abril 2026 o Q2 3-Meses" class="flex-1 px-3 py-2 text-sm rounded-lg border focus:ring-2 focus:ring-indigo-500 outline-none">
-                        <button onclick="addGlobalCycle()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700">Lanzar</button>
+                        <input type="text" id="cycle-name" placeholder="Ej: Abril 2026" class="flex-1 px-3 py-2 text-sm rounded-lg border focus:ring-2 focus:ring-indigo-500 outline-none">
+                        <button onclick="addGlobalCycle()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition">Lanzar</button>
                     </div>
                 </div>
 
@@ -41,7 +277,7 @@
                     <h3 class="font-semibold text-sm text-slate-700 mb-2">2. Dar de Alta Usuario</h3>
                     <div class="flex gap-2">
                         <input type="text" id="new-user-name" placeholder="Nombre" class="flex-1 px-3 py-2 text-sm rounded-lg border focus:ring-2 focus:ring-indigo-500 outline-none">
-                        <button onclick="addUser()" class="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-900">Añadir</button>
+                        <button onclick="addUser()" class="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-900 transition">Añadir</button>
                     </div>
                 </div>
             </div>
@@ -55,149 +291,7 @@
         </div>
 
         <!-- Dashboard User List -->
-        <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
-            <h2 class="text-lg font-bold text-slate-900 mb-4">Estado General</h2>
-            <div id="users-container" class="space-y-4"></div>
-        </div>
+        <div class="space-y-4" id="users-container"></div>
     </div>
-
-    <script>
-        const ADMIN_PIN = "1234";
-        let isAdmin = false;
-        let selectedUserIndex = null;
-
-        let db = JSON.parse(localStorage.getItem('group_pay_db')) || {
-            users: [
-                { name: "Carlos", history: [{ title: "Marzo", paid: true }, { title: "Abril", paid: false }] },
-                { name: "Ana", history: [{ title: "Marzo", paid: true }, { title: "Abril", paid: false }] }
-            ]
-        };
-
-        function saveData() {
-            localStorage.setItem('group_pay_db', JSON.stringify(db));
-            render();
-        }
-
-        function handleAdminAccess() {
-            if (!isAdmin) {
-                const pin = prompt("Introduce la contraseña de Administrador:");
-                if (pin === ADMIN_PIN) {
-                    isAdmin = true;
-                    document.getElementById('admin-panel').classList.remove('hidden');
-                    document.getElementById('admin-btn').textContent = "Cerrar Admin";
-                    document.getElementById('admin-btn').classList.replace('bg-slate-900', 'bg-rose-600');
-                } else if (pin !== null) {
-                    alert("Contraseña incorrecta.");
-                }
-            } else {
-                isAdmin = false;
-                selectedUserIndex = null;
-                document.getElementById('admin-panel').classList.add('hidden');
-                document.getElementById('admin-btn').textContent = "Acceso Admin";
-                document.getElementById('admin-btn').classList.replace('bg-rose-600', 'bg-slate-900');
-            }
-            render();
-        }
-
-        function addGlobalCycle() {
-            const input = document.getElementById('cycle-name');
-            if (!input.value.trim()) return;
-            db.users.forEach(u => u.history.push({ title: input.value.trim(), paid: false }));
-            input.value = '';
-            saveData();
-        }
-
-        function addUser() {
-            const input = document.getElementById('new-user-name');
-            if (!input.value.trim()) return;
-            const cycles = db.users.length > 0 ? db.users[0].history.map(h => ({ title: h.title, paid: false })) : [];
-            db.users.push({ name: input.value.trim(), history: cycles });
-            input.value = '';
-            saveData();
-        }
-
-        function togglePayment(uIdx, hIdx) {
-            db.users[uIdx].history[hIdx].paid = !db.users[uIdx].history[hIdx].paid;
-            saveData();
-        }
-
-        function deleteBlock(uIdx, hIdx) {
-            db.users[uIdx].history.splice(hIdx, 1);
-            saveData();
-        }
-
-        function render() {
-            // Render Main Users List
-            const container = document.getElementById('users-container');
-            container.innerHTML = '';
-
-            db.users.forEach((user) => {
-                const blocksHtml = user.history.map(h => `
-                    <div class="flex flex-col items-center">
-                        <div class="px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm ${h.paid ? 'bg-emerald-500 text-white' : 'bg-purple-100 text-purple-700 border border-purple-200'}">
-                            ${h.title}
-                        </div>
-                        <span class="text-[10px] mt-1 text-slate-400 font-medium">${h.paid ? 'Pagado' : 'Pendiente'}</span>
-                    </div>
-                `).join('');
-
-                container.innerHTML += `
-                    <div class="p-4 rounded-xl border border-slate-100 bg-slate-50/50 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                        <div class="font-bold text-slate-800 text-base min-w-[120px]">${user.name}</div>
-                        <div class="flex flex-wrap gap-2 items-center flex-1">${blocksHtml || '<span class="text-xs text-slate-400">Sin registros</span>'}</div>
-                    </div>
-                `;
-            });
-
-            // Render Admin Buttons
-            if (isAdmin) {
-                const btnContainer = document.getElementById('user-buttons');
-                btnContainer.innerHTML = db.users.map((u, i) => `
-                    <button onclick="selectUser(${i})" class="px-3 py-1.5 rounded-lg text-sm font-medium transition ${selectedUserIndex === i ? 'bg-indigo-600 text-white' : 'bg-white border text-slate-700 hover:bg-slate-100'}">
-                        ${u.name}
-                    </button>
-                `).join('');
-
-                renderUserEditor();
-            }
-        }
-
-        function selectUser(idx) {
-            selectedUserIndex = idx;
-            renderUserEditor();
-        }
-
-        function renderUserEditor() {
-            const editor = document.getElementById('user-editor');
-            if (selectedUserIndex === null || !db.users[selectedUserIndex]) {
-                editor.classList.add('hidden');
-                return;
-            }
-
-            editor.classList.remove('hidden');
-            const user = db.users[selectedUserIndex];
-
-            const blocks = user.history.map((h, hIdx) => `
-                <div class="flex items-center justify-between bg-white p-2.5 rounded-lg border border-slate-200 text-sm">
-                    <span class="font-medium text-slate-700">${h.title}</span>
-                    <div class="flex items-center gap-2">
-                        <button onclick="togglePayment(${selectedUserIndex}, ${hIdx})" class="px-3 py-1 rounded text-xs font-semibold ${h.paid ? 'bg-emerald-100 text-emerald-700' : 'bg-purple-100 text-purple-700'}">
-                            ${h.paid ? 'Marcar Pendiente' : 'Marcar Pagado'}
-                        </button>
-                        <button onclick="deleteBlock(${selectedUserIndex}, ${hIdx})" class="text-rose-500 hover:text-rose-700 text-xs px-2 py-1">Eliminar</button>
-                    </div>
-                </div>
-            `).join('');
-
-            editor.innerHTML = `
-                <div class="flex justify-between items-center mb-2">
-                    <h4 class="font-bold text-slate-800 text-sm">Gestionando pagos de: <span class="text-indigo-600">${user.name}</span></h4>
-                </div>
-                <div class="space-y-2">${blocks || '<p class="text-xs text-slate-500">No hay bloques asignados.</p>'}</div>
-            `;
-        }
-
-        render();
-    </script>
 </body>
 </html>
