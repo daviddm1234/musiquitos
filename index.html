@@ -26,8 +26,8 @@
 
         const defaultData = {
             users: [
-                { name: "David", avatar: DEFAULT_AVATAR, history: [{ title: "Enero", paid: true }, { title: "Febrero", paid: false }] },
-                { name: "Amigo 1", avatar: DEFAULT_AVATAR, history: [{ title: "Enero", paid: false }, { title: "Febrero", paid: false }] }
+                { name: "David", avatar: DEFAULT_AVATAR, history: [{ title: "Enero", paid: true, paidAt: "15/01/2026" }, { title: "Febrero", paid: false, paidAt: "" }] },
+                { name: "Amigo 1", avatar: DEFAULT_AVATAR, history: [{ title: "Enero", paid: false, paidAt: "" }, { title: "Febrero", paid: false, paidAt: "" }] }
             ]
         };
 
@@ -35,6 +35,33 @@
         const ADMIN_PIN = "1234";
         let isAdmin = false;
         let selectedUserIndex = null;
+
+        // Funciones auxiliares para manejar el formato de fechas del calendario
+        function getTodayYMD() {
+            const today = new Date();
+            const dd = String(today.getDate()).padStart(2, '0');
+            const mm = String(today.getMonth() + 1).padStart(2, '0');
+            const yyyy = today.getFullYear();
+            return `${yyyy}-${mm}-${dd}`;
+        }
+
+        function parseToYMD(dmy) {
+            if (!dmy) return getTodayYMD(); // Pre-rellenar con hoy si está vacío
+            const parts = dmy.split('/');
+            if (parts.length === 3) {
+                return `${parts[2]}-${parts[1]}-${parts[0]}`;
+            }
+            return getTodayYMD();
+        }
+
+        function parseToDMY(ymd) {
+            if (!ymd) return "";
+            const parts = ymd.split('-');
+            if (parts.length === 3) {
+                return `${parts[2]}/${parts[1]}/${parts[0]}`;
+            }
+            return ymd;
+        }
 
         onSnapshot(docRef, (docSnap) => {
             if (docSnap.exists()) {
@@ -76,7 +103,7 @@
         window.addGlobalCycle = function() {
             const input = document.getElementById('cycle-name');
             if (!input.value.trim()) return;
-            currentDb.users.forEach(u => u.history.push({ title: input.value.trim(), paid: false }));
+            currentDb.users.forEach(u => u.history.push({ title: input.value.trim(), paid: false, paidAt: "" }));
             input.value = '';
             window.saveDataToFirebase();
         };
@@ -84,7 +111,7 @@
         window.addUser = function() {
             const input = document.getElementById('new-user-name');
             if (!input.value.trim()) return;
-            const cycles = currentDb.users.length > 0 ? currentDb.users[0].history.map(h => ({ title: h.title, paid: false })) : [];
+            const cycles = currentDb.users.length > 0 ? currentDb.users[0].history.map(h => ({ title: h.title, paid: false, paidAt: "" })) : [];
             currentDb.users.push({ name: input.value.trim(), avatar: DEFAULT_AVATAR, history: cycles });
             input.value = '';
             window.saveDataToFirebase();
@@ -111,12 +138,22 @@
 
         window.updateBlockTitle = function(uIdx, hIdx) {
             const newTitle = document.getElementById(`edit-title-${uIdx}-${hIdx}`).value;
+            const newDateYMD = document.getElementById(`edit-date-${uIdx}-${hIdx}`).value;
             currentDb.users[uIdx].history[hIdx].title = newTitle;
+            currentDb.users[uIdx].history[hIdx].paidAt = parseToDMY(newDateYMD);
             window.saveDataToFirebase();
         };
 
         window.togglePayment = function(uIdx, hIdx) {
-            currentDb.users[uIdx].history[hIdx].paid = !currentDb.users[uIdx].history[hIdx].paid;
+            const item = currentDb.users[uIdx].history[hIdx];
+            item.paid = !item.paid;
+            if (item.paid && !item.paidAt) {
+                const today = new Date();
+                const dd = String(today.getDate()).padStart(2, '0');
+                const mm = String(today.getMonth() + 1).padStart(2, '0');
+                const yyyy = today.getFullYear();
+                item.paidAt = `${dd}/${mm}/${yyyy}`;
+            }
             window.saveDataToFirebase();
         };
 
@@ -133,41 +170,74 @@
                 let lastPaidIdx = -1;
                 user.history.forEach((h, i) => { if(h.paid) lastPaidIdx = i; });
 
-                const blocksHtml = user.history.map((h, i) => {
-                    const isAvatarHere = (i === lastPaidIdx) || (lastPaidIdx === -1 && i === 0);
-                    const blockColor = h.paid ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-slate-200 text-slate-600 border-slate-300';
-                    const avatarContent = user.avatar || DEFAULT_AVATAR;
+                const avatarContent = user.avatar || DEFAULT_AVATAR;
+                const avatarImgHtml = avatarContent.startsWith('http') || avatarContent.endsWith('.jpg') || avatarContent.endsWith('.png')
+                    ? `<img src="${avatarContent}" class="w-7 h-7 rounded-full object-cover shadow bg-white ring-2 ring-emerald-500">`
+                    : `<span class="text-xl drop-shadow">${avatarContent}</span>`;
 
-                    const avatarHtml = avatarContent.startsWith('http') || avatarContent.endsWith('.jpg') || avatarContent.endsWith('.png')
-                        ? `<img src="${avatarContent}" class="w-10 h-10 absolute -top-5 z-10 object-cover drop-shadow">`
-                        : `<span class="text-3xl absolute -top-6 z-10 drop-shadow">${avatarContent}</span>`;
+                const milestoneNodesHtml = user.history.map((h, i) => {
+                    const isAvatarHere = (i === lastPaidIdx) || (lastPaidIdx === -1 && i === 0);
                     
+                    if (isAvatarHere) {
+                        return `
+                        <div class="flex flex-col items-center justify-center min-w-[100px] h-10 relative z-10">
+                            <div class="flex items-center justify-center">${avatarImgHtml}</div>
+                        </div>`;
+                    } else if (i < lastPaidIdx) {
+                        return `
+                        <div class="flex flex-col items-center justify-center min-w-[100px] h-10 relative z-10">
+                            <div class="w-2.5 h-2.5 rounded-full bg-emerald-500 ring-4 ring-white shadow-sm"></div>
+                        </div>`;
+                    } else {
+                        return `
+                        <div class="flex flex-col items-center justify-center min-w-[100px] h-10 relative z-10">
+                            <div class="w-2.5 h-2.5 rounded-full bg-slate-300 ring-4 ring-white"></div>
+                        </div>`;
+                    }
+                }).join('');
+
+                const cardsHtml = user.history.map((h) => {
+                    const cardBg = h.paid ? 'bg-emerald-100/70 border-emerald-300' : 'bg-slate-100/80 border-slate-200';
+                    const titleColor = h.paid ? 'text-emerald-900' : 'text-slate-700';
+                    const statusText = h.paid ? 'Pagado' : 'Pendiente';
+                    const statusColor = h.paid ? 'text-emerald-700 font-medium' : 'text-slate-400';
+
                     return `
-                    <div class="flex flex-col items-center justify-end min-w-[100px] h-[120px] relative px-1">
-                        ${isAvatarHere ? avatarHtml : ''}
-                        <div class="w-full h-12 ${blockColor} border rounded-xl flex items-center justify-center text-xs font-medium px-2 truncate relative shadow-sm">
+                    <div class="flex flex-col min-w-[105px] h-[76px] ${cardBg} border rounded-xl overflow-hidden shadow-sm">
+                        <div class="px-2.5 py-1.5 font-medium text-xs ${titleColor} truncate border-b border-slate-200/50">
                             ${h.title}
+                        </div>
+                        <div class="flex-1 px-2.5 py-1.5 flex flex-col justify-center bg-white/50">
+                            <span class="text-[11px] ${statusColor}">${statusText}</span>
+                            ${h.paid && h.paidAt ? `<span class="text-[10px] text-slate-400 font-mono mt-0.5">${h.paidAt}</span>` : ''}
                         </div>
                     </div>`;
                 }).join('');
 
                 container.innerHTML += `
-                    <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200/80 flex flex-col items-start gap-3">
-                        <div class="font-light text-slate-700 text-base tracking-wide">${user.name}</div>
-                        <div id="scroll-container-${userIdx}" class="flex-1 overflow-x-auto w-full pb-1 scroll-smooth">
-                            <div class="flex items-end border-b border-slate-200/60 pb-2 min-w-max px-2 gap-1">
-                                ${blocksHtml || '<span class="text-xs text-slate-400 h-12 flex items-center">Sin bloques</span>'}
+                    <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200/80 flex flex-col gap-3">
+                        <div class="font-normal text-slate-900 text-lg tracking-wide">${user.name}</div>
+                        <div id="scroll-line-${userIdx}" class="overflow-x-auto w-full scroll-smooth">
+                            <div class="relative flex items-center min-w-max px-6">
+                                <div class="absolute left-10 right-10 top-1/2 -translate-y-1/2 h-[2px] bg-slate-200 z-0"></div>
+                                ${milestoneNodesHtml || '<span class="text-xs text-slate-400">Sin datos</span>'}
+                            </div>
+                        </div>
+                        <div id="scroll-cards-${userIdx}" class="overflow-x-auto w-full pt-1 pb-1 scroll-smooth">
+                            <div class="flex items-center gap-2 min-w-max">
+                                ${cardsHtml || '<span class="text-xs text-slate-400">Sin bloques</span>'}
                             </div>
                         </div>
                     </div>
                 `;
             });
 
-            // Auto-scroll al final del slider para mostrar siempre lo más reciente
             setTimeout(() => {
                 currentDb.users.forEach((_, idx) => {
-                    const el = document.getElementById(`scroll-container-${idx}`);
-                    if (el) el.scrollLeft = el.scrollWidth;
+                    const elLine = document.getElementById(`scroll-line-${idx}`);
+                    const elCards = document.getElementById(`scroll-cards-${idx}`);
+                    if (elLine) elLine.scrollLeft = elLine.scrollWidth;
+                    if (elCards) elCards.scrollLeft = elCards.scrollWidth;
                 });
             }, 50);
 
@@ -202,15 +272,19 @@
                         <label class="text-xs block font-medium text-slate-500 mb-1">Avatar (Emoji o URL)</label>
                         <input type="text" id="edit-img-${selectedUserIndex}" value="${user.avatar || DEFAULT_AVATAR}" class="px-2.5 py-1 rounded-md border border-slate-300 text-xs w-full outline-none focus:ring-1 focus:ring-slate-400">
                     </div>
-                    <button onclick="updateUserHeader(${selectedUserIndex})" class="bg-slate-800 text-white px-3 py-1 rounded-md text-xs font-medium hover:bg-slate-900 transition">Guardar</button>
+                    <button onclick="updateUserHeader(${selectedUserIndex})" class="bg-slate-800 text-white px-3 py-1 rounded-md text-xs font-medium hover:bg-slate-900 transition">Guardar Header</button>
                 </div>
             `;
 
             const blocks = user.history.map((h, hIdx) => `
                 <div class="flex flex-wrap items-center justify-between bg-slate-50 p-2.5 rounded-lg border border-slate-200 gap-2 text-xs">
-                    <div class="flex gap-2 items-center">
-                        <input type="text" id="edit-title-${selectedUserIndex}-${hIdx}" value="${h.title}" class="w-24 px-2 py-0.5 rounded border border-slate-300 outline-none">
-                        <button onclick="updateBlockTitle(${selectedUserIndex}, ${hIdx})" class="bg-slate-200 text-slate-700 px-2 py-0.5 rounded text-[11px] font-medium hover:bg-slate-300 transition">Renombrar</button>
+                    <div class="flex gap-1.5 items-center flex-wrap">
+                        <input type="text" id="edit-title-${selectedUserIndex}-${hIdx}" value="${h.title}" class="w-20 px-2 py-0.5 rounded border border-slate-300 outline-none" placeholder="Título">
+                        
+                        <!-- Nuevo input de tipo date -->
+                        <input type="date" id="edit-date-${selectedUserIndex}-${hIdx}" value="${parseToYMD(h.paidAt)}" class="w-28 px-1 py-0.5 rounded border border-slate-300 outline-none text-[11px] bg-white cursor-pointer">
+                        
+                        <button onclick="updateBlockTitle(${selectedUserIndex}, ${hIdx})" class="bg-slate-200 text-slate-700 px-2 py-0.5 rounded text-[11px] font-medium hover:bg-slate-300 transition">Guardar</button>
                     </div>
                     <div class="flex items-center gap-2">
                         <button onclick="togglePayment(${selectedUserIndex}, ${hIdx})" class="px-2.5 py-1 rounded text-[11px] font-medium transition ${h.paid ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'}">
@@ -236,22 +310,19 @@
 
     <div class="max-w-3xl mx-auto space-y-4">
         
-        <!-- Top Navigation / Admin Link -->
         <div class="flex justify-end px-1">
             <button onclick="handleAdminAccess()" id="admin-btn" class="text-xs font-light text-slate-400 hover:text-slate-600 transition">
                 Acceso Admin
             </button>
         </div>
 
-        <!-- Header -->
-        <header class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200/80 flex items-center justify-between">
+        <header class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/80 flex items-center justify-between">
             <div class="flex items-center gap-3">
-                <span class="text-2xl">🎸</span>
-                <h1 class="text-xl font-light tracking-wide text-slate-800">Musiquitos</h1>
+                <span class="text-3xl">🎸</span>
+                <h1 class="text-3xl font-semibold tracking-tight text-slate-900">Musiquitos</h1>
             </div>
         </header>
 
-        <!-- Admin Panel -->
         <div id="admin-panel" class="hidden bg-white p-5 rounded-2xl shadow-sm border border-slate-300 space-y-5">
             <div class="flex justify-between items-center border-b pb-3">
                 <h2 class="text-sm font-medium text-slate-700">⚙️ Panel de Administración</h2>
@@ -285,7 +356,6 @@
             </div>
         </div>
 
-        <!-- Dashboard User List -->
         <div class="space-y-3" id="users-container"></div>
     </div>
 </body>
