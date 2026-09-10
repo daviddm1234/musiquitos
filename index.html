@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Musiquitos</title>
+    <title>Panel de David</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, onSnapshot, getDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
         const firebaseConfig = {
           apiKey: "AIzaSyCZsiOVc-wq6tDl3mHDVwo6nTRhx25-Qw8",
@@ -20,23 +20,21 @@
 
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
-        const docRef = doc(db, "suscripcion", "datos_grupo");
 
+        const ADMIN_PIN = "1234";
         const DEFAULT_AVATAR = "👾";
 
-        const defaultData = {
-            users: [
-                { name: "David", avatar: DEFAULT_AVATAR, history: [{ title: "Enero", paid: true, paidAt: "15/01/2026" }, { title: "Febrero", paid: false, paidAt: "" }] },
-                { name: "Amigo 1", avatar: DEFAULT_AVATAR, history: [{ title: "Enero", paid: false, paidAt: "" }, { title: "Febrero", paid: false, paidAt: "" }] }
-            ]
-        };
+        // Detectar si estamos en una app específica o en el Hub principal
+        const urlParams = new URLSearchParams(window.location.search);
+        const appId = urlParams.get('app');
 
-        let currentDb = defaultData;
-        const ADMIN_PIN = "1234";
+        let currentDb = null;
+        let hubDirectory = { apps: [] };
         let isAdmin = false;
         let selectedUserIndex = null;
+        let unsubscribe = null;
 
-        // Funciones auxiliares para manejar el formato de fechas del calendario
+        // --- FUNCIONES AUXILIARES DE FECHA ---
         function getTodayYMD() {
             const today = new Date();
             const dd = String(today.getDate()).padStart(2, '0');
@@ -46,38 +44,103 @@
         }
 
         function parseToYMD(dmy) {
-            if (!dmy) return getTodayYMD(); // Pre-rellenar con hoy si está vacío
+            if (!dmy) return getTodayYMD();
             const parts = dmy.split('/');
-            if (parts.length === 3) {
-                return `${parts[2]}-${parts[1]}-${parts[0]}`;
-            }
+            if (parts.length === 3) return `${parts[2]}-${parts[1]}-${parts[0]}`;
             return getTodayYMD();
         }
 
         function parseToDMY(ymd) {
             if (!ymd) return "";
             const parts = ymd.split('-');
-            if (parts.length === 3) {
-                return `${parts[2]}/${parts[1]}/${parts[0]}`;
-            }
+            if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
             return ymd;
         }
 
-        onSnapshot(docRef, (docSnap) => {
-            if (docSnap.exists()) {
-                currentDb = docSnap.data();
-            } else {
-                setDoc(docRef, defaultData);
-            }
-            render();
-        });
+        // --- INICIALIZACIÓN ---
+        if (appId) {
+            // MODO APP (Ej: ?app=musiquitos)
+            document.getElementById('hub-view').classList.add('hidden');
+            document.getElementById('app-view').classList.remove('hidden');
+            
+            const docRef = doc(db, "David", appId);
+            unsubscribe = onSnapshot(docRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    currentDb = docSnap.data();
+                } else {
+                    // Si la app no existe, creamos una estructura base
+                    currentDb = {
+                        appName: appId.toUpperCase(),
+                        users: []
+                    };
+                    setDoc(docRef, currentDb);
+                }
+                renderApp();
+            });
+        } else {
+            // MODO HUB (Sin parámetros en la URL)
+            document.getElementById('hub-view').classList.remove('hidden');
+            document.getElementById('app-view').classList.add('hidden');
+        }
 
-        window.saveDataToFirebase = async function() {
+        // --- LÓGICA DEL HUB (DIRECTORIO) ---
+        window.loginHub = async function() {
+            const pin = prompt("Introduce tu PIN para acceder al Directorio Maestro:");
+            if (pin === ADMIN_PIN) {
+                const dirRef = doc(db, "David", "_directorio");
+                onSnapshot(dirRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        hubDirectory = docSnap.data();
+                    } else {
+                        setDoc(dirRef, hubDirectory);
+                    }
+                    renderHub();
+                });
+            } else if (pin !== null) {
+                alert("PIN incorrecto.");
+            }
+        };
+
+        window.createNewApp = async function() {
+            const inputName = document.getElementById('new-app-name').value.trim();
+            if (!inputName) return;
+            
+            const newAppId = inputName.toLowerCase().replace(/[^a-z0-9]/g, '-');
+            
+            // Añadir al directorio
+            hubDirectory.apps.push({ id: newAppId, name: inputName });
+            await setDoc(doc(db, "David", "_directorio"), hubDirectory);
+            
+            // Crear el documento de la nueva app
+            await setDoc(doc(db, "David", newAppId), {
+                appName: inputName,
+                users: []
+            });
+
+            document.getElementById('new-app-name').value = '';
+        };
+
+        function renderHub() {
+            const hubContainer = document.getElementById('hub-content');
+            hubContainer.classList.remove('hidden');
+            document.getElementById('hub-login-btn').classList.add('hidden');
+
+            const appsList = hubDirectory.apps.map(a => `
+                <a href="?app=${a.id}" class="block p-4 bg-white border border-slate-200 rounded-xl shadow-sm hover:border-slate-400 transition flex justify-between items-center">
+                    <span class="font-medium text-slate-800">${a.name}</span>
+                    <span class="text-slate-400 text-xs">Abrir →</span>
+                </a>
+            `).join('');
+
+            document.getElementById('hub-apps-list').innerHTML = appsList || '<p class="text-sm text-slate-500">No hay proyectos creados aún.</p>';
+        }
+
+        // --- LÓGICA DE LA APP INDIVIDUAL ---
+        window.saveAppToFirebase = async function() {
             try {
-                await setDoc(docRef, currentDb);
+                await setDoc(doc(db, "David", appId), currentDb);
             } catch (e) {
-                console.error("Error al guardar en Firebase: ", e);
-                alert("Hubo un error al guardar los datos.");
+                console.error("Error al guardar:", e);
             }
         };
 
@@ -87,9 +150,7 @@
                 if (pin === ADMIN_PIN) {
                     isAdmin = true;
                     document.getElementById('admin-panel').classList.remove('hidden');
-                    document.getElementById('admin-btn').textContent = "Cerrar Modo Admin";
-                } else if (pin !== null) {
-                    alert("PIN incorrecto.");
+                    document.getElementById('admin-btn').textContent = "Cerrar Admin";
                 }
             } else {
                 isAdmin = false;
@@ -97,7 +158,7 @@
                 document.getElementById('admin-panel').classList.add('hidden');
                 document.getElementById('admin-btn').textContent = "Acceso Admin";
             }
-            render();
+            renderApp();
         };
 
         window.addGlobalCycle = function() {
@@ -105,7 +166,7 @@
             if (!input.value.trim()) return;
             currentDb.users.forEach(u => u.history.push({ title: input.value.trim(), paid: false, paidAt: "" }));
             input.value = '';
-            window.saveDataToFirebase();
+            window.saveAppToFirebase();
         };
 
         window.addUser = function() {
@@ -114,34 +175,24 @@
             const cycles = currentDb.users.length > 0 ? currentDb.users[0].history.map(h => ({ title: h.title, paid: false, paidAt: "" })) : [];
             currentDb.users.push({ name: input.value.trim(), avatar: DEFAULT_AVATAR, history: cycles });
             input.value = '';
-            window.saveDataToFirebase();
-        };
-
-        window.backupData = function() {
-            const dataStr = JSON.stringify(currentDb, null, 2);
-            const email = "davidenpelotas@hotmail.com";
-            const subject = encodeURIComponent("Backup Musiquitos");
-            const body = encodeURIComponent("Copia de seguridad de los datos de pago:\n\n" + dataStr);
-            window.location.href = `mailto:${email}?subject=${subject}&body=${body}`;
+            window.saveAppToFirebase();
         };
 
         window.selectUser = function(idx) {
             selectedUserIndex = idx;
-            render();
+            renderApp();
         };
 
         window.updateUserHeader = function(idx) {
             currentDb.users[idx].name = document.getElementById(`edit-name-${idx}`).value;
             currentDb.users[idx].avatar = document.getElementById(`edit-img-${idx}`).value;
-            window.saveDataToFirebase();
+            window.saveAppToFirebase();
         };
 
         window.updateBlockTitle = function(uIdx, hIdx) {
-            const newTitle = document.getElementById(`edit-title-${uIdx}-${hIdx}`).value;
-            const newDateYMD = document.getElementById(`edit-date-${uIdx}-${hIdx}`).value;
-            currentDb.users[uIdx].history[hIdx].title = newTitle;
-            currentDb.users[uIdx].history[hIdx].paidAt = parseToDMY(newDateYMD);
-            window.saveDataToFirebase();
+            currentDb.users[uIdx].history[hIdx].title = document.getElementById(`edit-title-${uIdx}-${hIdx}`).value;
+            currentDb.users[uIdx].history[hIdx].paidAt = parseToDMY(document.getElementById(`edit-date-${uIdx}-${hIdx}`).value);
+            window.saveAppToFirebase();
         };
 
         window.togglePayment = function(uIdx, hIdx) {
@@ -149,20 +200,19 @@
             item.paid = !item.paid;
             if (item.paid && !item.paidAt) {
                 const today = new Date();
-                const dd = String(today.getDate()).padStart(2, '0');
-                const mm = String(today.getMonth() + 1).padStart(2, '0');
-                const yyyy = today.getFullYear();
-                item.paidAt = `${dd}/${mm}/${yyyy}`;
+                item.paidAt = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
             }
-            window.saveDataToFirebase();
+            window.saveAppToFirebase();
         };
 
         window.deleteBlock = function(uIdx, hIdx) {
             currentDb.users[uIdx].history.splice(hIdx, 1);
-            window.saveDataToFirebase();
+            window.saveAppToFirebase();
         };
 
-        function render() {
+        function renderApp() {
+            document.getElementById('app-title').textContent = currentDb.appName || "Aplicación";
+            
             const container = document.getElementById('users-container');
             container.innerHTML = '';
 
@@ -177,23 +227,9 @@
 
                 const milestoneNodesHtml = user.history.map((h, i) => {
                     const isAvatarHere = (i === lastPaidIdx) || (lastPaidIdx === -1 && i === 0);
-                    
-                    if (isAvatarHere) {
-                        return `
-                        <div class="flex flex-col items-center justify-center min-w-[100px] h-10 relative z-10">
-                            <div class="flex items-center justify-center">${avatarImgHtml}</div>
-                        </div>`;
-                    } else if (i < lastPaidIdx) {
-                        return `
-                        <div class="flex flex-col items-center justify-center min-w-[100px] h-10 relative z-10">
-                            <div class="w-2.5 h-2.5 rounded-full bg-emerald-500 ring-4 ring-white shadow-sm"></div>
-                        </div>`;
-                    } else {
-                        return `
-                        <div class="flex flex-col items-center justify-center min-w-[100px] h-10 relative z-10">
-                            <div class="w-2.5 h-2.5 rounded-full bg-slate-300 ring-4 ring-white"></div>
-                        </div>`;
-                    }
+                    if (isAvatarHere) return `<div class="flex flex-col items-center justify-center min-w-[100px] h-10 relative z-10"><div class="flex items-center justify-center">${avatarImgHtml}</div></div>`;
+                    else if (i < lastPaidIdx) return `<div class="flex flex-col items-center justify-center min-w-[100px] h-10 relative z-10"><div class="w-2.5 h-2.5 rounded-full bg-emerald-500 ring-4 ring-white shadow-sm"></div></div>`;
+                    else return `<div class="flex flex-col items-center justify-center min-w-[100px] h-10 relative z-10"><div class="w-2.5 h-2.5 rounded-full bg-slate-300 ring-4 ring-white"></div></div>`;
                 }).join('');
 
                 const cardsHtml = user.history.map((h) => {
@@ -204,9 +240,7 @@
 
                     return `
                     <div class="flex flex-col min-w-[105px] h-[76px] ${cardBg} border rounded-xl overflow-hidden shadow-sm">
-                        <div class="px-2.5 py-1.5 font-medium text-xs ${titleColor} truncate border-b border-slate-200/50">
-                            ${h.title}
-                        </div>
+                        <div class="px-2.5 py-1.5 font-medium text-xs ${titleColor} truncate border-b border-slate-200/50">${h.title}</div>
                         <div class="flex-1 px-2.5 py-1.5 flex flex-col justify-center bg-white/50">
                             <span class="text-[11px] ${statusColor}">${statusText}</span>
                             ${h.paid && h.paidAt ? `<span class="text-[10px] text-slate-400 font-mono mt-0.5">${h.paidAt}</span>` : ''}
@@ -232,21 +266,9 @@
                 `;
             });
 
-            setTimeout(() => {
-                currentDb.users.forEach((_, idx) => {
-                    const elLine = document.getElementById(`scroll-line-${idx}`);
-                    const elCards = document.getElementById(`scroll-cards-${idx}`);
-                    if (elLine) elLine.scrollLeft = elLine.scrollWidth;
-                    if (elCards) elCards.scrollLeft = elCards.scrollWidth;
-                });
-            }, 50);
-
             if (isAdmin) {
-                const btnContainer = document.getElementById('user-buttons');
-                btnContainer.innerHTML = currentDb.users.map((u, i) => `
-                    <button onclick="selectUser(${i})" class="px-3 py-1.5 rounded-lg text-xs font-medium transition ${selectedUserIndex === i ? 'bg-slate-800 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}">
-                        ${u.name}
-                    </button>
+                document.getElementById('user-buttons').innerHTML = currentDb.users.map((u, i) => `
+                    <button onclick="selectUser(${i})" class="px-3 py-1.5 rounded-lg text-xs font-medium transition ${selectedUserIndex === i ? 'bg-slate-800 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}">${u.name}</button>
                 `).join('');
                 renderUserEditor();
             }
@@ -258,20 +280,13 @@
                 editor.classList.add('hidden');
                 return;
             }
-
             editor.classList.remove('hidden');
             const user = currentDb.users[selectedUserIndex];
 
             const userHeaderHtml = `
                 <div class="bg-slate-50 p-3 rounded-lg border border-slate-200 flex flex-wrap gap-3 items-end">
-                    <div>
-                        <label class="text-xs block font-medium text-slate-500 mb-1">Nombre</label>
-                        <input type="text" id="edit-name-${selectedUserIndex}" value="${user.name}" class="px-2.5 py-1 rounded-md border border-slate-300 text-xs w-32 outline-none focus:ring-1 focus:ring-slate-400">
-                    </div>
-                    <div class="flex-1 min-w-[140px]">
-                        <label class="text-xs block font-medium text-slate-500 mb-1">Avatar (Emoji o URL)</label>
-                        <input type="text" id="edit-img-${selectedUserIndex}" value="${user.avatar || DEFAULT_AVATAR}" class="px-2.5 py-1 rounded-md border border-slate-300 text-xs w-full outline-none focus:ring-1 focus:ring-slate-400">
-                    </div>
+                    <div><label class="text-xs block font-medium text-slate-500 mb-1">Nombre</label><input type="text" id="edit-name-${selectedUserIndex}" value="${user.name}" class="px-2.5 py-1 rounded-md border border-slate-300 text-xs w-32 outline-none"></div>
+                    <div class="flex-1 min-w-[140px]"><label class="text-xs block font-medium text-slate-500 mb-1">Avatar (Emoji/URL)</label><input type="text" id="edit-img-${selectedUserIndex}" value="${user.avatar || DEFAULT_AVATAR}" class="px-2.5 py-1 rounded-md border border-slate-300 text-xs w-full outline-none"></div>
                     <button onclick="updateUserHeader(${selectedUserIndex})" class="bg-slate-800 text-white px-3 py-1 rounded-md text-xs font-medium hover:bg-slate-900 transition">Guardar Header</button>
                 </div>
             `;
@@ -279,84 +294,104 @@
             const blocks = user.history.map((h, hIdx) => `
                 <div class="flex flex-wrap items-center justify-between bg-slate-50 p-2.5 rounded-lg border border-slate-200 gap-2 text-xs">
                     <div class="flex gap-1.5 items-center flex-wrap">
-                        <input type="text" id="edit-title-${selectedUserIndex}-${hIdx}" value="${h.title}" class="w-20 px-2 py-0.5 rounded border border-slate-300 outline-none" placeholder="Título">
-                        
-                        <!-- Nuevo input de tipo date -->
+                        <input type="text" id="edit-title-${selectedUserIndex}-${hIdx}" value="${h.title}" class="w-20 px-2 py-0.5 rounded border border-slate-300 outline-none">
                         <input type="date" id="edit-date-${selectedUserIndex}-${hIdx}" value="${parseToYMD(h.paidAt)}" class="w-28 px-1 py-0.5 rounded border border-slate-300 outline-none text-[11px] bg-white cursor-pointer">
-                        
                         <button onclick="updateBlockTitle(${selectedUserIndex}, ${hIdx})" class="bg-slate-200 text-slate-700 px-2 py-0.5 rounded text-[11px] font-medium hover:bg-slate-300 transition">Guardar</button>
                     </div>
                     <div class="flex items-center gap-2">
-                        <button onclick="togglePayment(${selectedUserIndex}, ${hIdx})" class="px-2.5 py-1 rounded text-[11px] font-medium transition ${h.paid ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'}">
-                            ${h.paid ? 'Marcar Pendiente' : 'Marcar Pagado'}
-                        </button>
+                        <button onclick="togglePayment(${selectedUserIndex}, ${hIdx})" class="px-2.5 py-1 rounded text-[11px] font-medium transition ${h.paid ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'}">${h.paid ? 'Pendiente' : 'Pagado'}</button>
                         <button onclick="deleteBlock(${selectedUserIndex}, ${hIdx})" class="text-rose-500 hover:text-rose-700 text-[11px] px-1 font-medium">Eliminar</button>
                     </div>
                 </div>
             `).join('');
 
-            editor.innerHTML = `
-                <h4 class="font-medium text-slate-700 text-sm mb-2">Editando: <span class="font-normal text-slate-900">${user.name}</span></h4>
-                ${userHeaderHtml}
-                <div class="space-y-1.5 mt-3">
-                    <h5 class="font-medium text-slate-600 text-xs mb-1">Bloques de Pago:</h5>
-                    ${blocks || '<p class="text-xs text-slate-400">Sin bloques.</p>'}
-                </div>
-            `;
+            editor.innerHTML = `<h4 class="font-medium text-slate-700 text-sm mb-2">Editando: <span class="font-normal text-slate-900">${user.name}</span></h4>${userHeaderHtml}<div class="space-y-1.5 mt-3">${blocks || '<p class="text-xs text-slate-400">Sin bloques.</p>'}</div>`;
         }
     </script>
 </head>
 <body class="bg-slate-100 text-slate-800 font-sans min-h-screen p-4 md:p-6">
 
-    <div class="max-w-3xl mx-auto space-y-4">
-        
-        <div class="flex justify-end px-1">
-            <button onclick="handleAdminAccess()" id="admin-btn" class="text-xs font-light text-slate-400 hover:text-slate-600 transition">
-                Acceso Admin
-            </button>
+    <div class="max-w-3xl mx-auto">
+
+        <!-- ================= VISTA HUB (DIRECTORIO MAESTRO) ================= -->
+        <div id="hub-view" class="hidden space-y-6 pt-10">
+            <div class="text-center space-y-2">
+                <span class="text-5xl">📁</span>
+                <h1 class="text-3xl font-semibold tracking-tight text-slate-900">Base de Datos: David</h1>
+                <p class="text-sm text-slate-500">Acceso restringido al directorio raíz.</p>
+            </div>
+            
+            <div class="flex justify-center">
+                <button id="hub-login-btn" onclick="loginHub()" class="bg-slate-900 text-white px-6 py-2.5 rounded-xl text-sm font-medium hover:bg-slate-800 transition shadow-sm">Entrar al Directorio</button>
+            </div>
+
+            <div id="hub-content" class="hidden space-y-6">
+                <!-- Crear nueva app -->
+                <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                    <h3 class="font-medium text-sm text-slate-700 mb-2">Crear Nuevo Proyecto</h3>
+                    <div class="flex gap-2">
+                        <input type="text" id="new-app-name" placeholder="Ej: Historial Médico, Suscripciones..." class="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-300 focus:ring-1 focus:ring-slate-400 outline-none">
+                        <button onclick="createNewApp()" class="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-900 transition">Crear</button>
+                    </div>
+                </div>
+
+                <!-- Lista de apps -->
+                <div>
+                    <h3 class="font-medium text-sm text-slate-600 mb-3 ml-1">Tus Proyectos Activos:</h3>
+                    <div id="hub-apps-list" class="grid grid-cols-1 md:grid-cols-2 gap-3"></div>
+                </div>
+            </div>
         </div>
 
-        <header class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/80 flex items-center justify-between">
-            <div class="flex items-center gap-3">
-                <span class="text-3xl">🎸</span>
-                <h1 class="text-3xl font-semibold tracking-tight text-slate-900">Musiquitos</h1>
-            </div>
-        </header>
-
-        <div id="admin-panel" class="hidden bg-white p-5 rounded-2xl shadow-sm border border-slate-300 space-y-5">
-            <div class="flex justify-between items-center border-b pb-3">
-                <h2 class="text-sm font-medium text-slate-700">⚙️ Panel de Administración</h2>
-                <button onclick="backupData()" class="bg-slate-100 text-slate-600 hover:bg-slate-200 px-3 py-1 rounded-lg text-xs font-medium transition">
-                    📧 Enviar Backup
+        <!-- ================= VISTA APLICACIÓN ESPECÍFICA ================= -->
+        <div id="app-view" class="hidden space-y-4">
+            
+            <div class="flex justify-between items-center px-1">
+                <a href="?" class="text-xs font-medium text-slate-500 hover:text-slate-800 flex items-center gap-1 transition bg-white px-3 py-1.5 rounded-lg border border-slate-200">
+                    ← Volver al Hub
+                </a>
+                <button onclick="handleAdminAccess()" id="admin-btn" class="text-xs font-light text-slate-400 hover:text-slate-600 transition">
+                    Acceso Admin
                 </button>
             </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div class="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                    <h3 class="font-medium text-xs text-slate-600 mb-1.5">1. Crear Período Global</h3>
-                    <div class="flex gap-2">
-                        <input type="text" id="cycle-name" placeholder="Ej: Abril 2026" class="flex-1 px-2.5 py-1 text-xs rounded-md border focus:ring-1 focus:ring-slate-400 outline-none">
-                        <button onclick="addGlobalCycle()" class="bg-slate-800 text-white px-3 py-1 rounded-md text-xs font-medium hover:bg-slate-900 transition">Lanzar</button>
+            <header class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/80">
+                <h1 id="app-title" class="text-3xl font-semibold tracking-tight text-slate-900">Cargando...</h1>
+            </header>
+
+            <div id="admin-panel" class="hidden bg-white p-5 rounded-2xl shadow-sm border border-slate-300 space-y-5">
+                <div class="flex justify-between items-center border-b pb-3">
+                    <h2 class="text-sm font-medium text-slate-700">⚙️ Administración de este proyecto</h2>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div class="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                        <h3 class="font-medium text-xs text-slate-600 mb-1.5">1. Crear Período / Tarea</h3>
+                        <div class="flex gap-2">
+                            <input type="text" id="cycle-name" placeholder="Ej: Abril 2026" class="flex-1 px-2.5 py-1 text-xs rounded-md border focus:ring-1 focus:ring-slate-400 outline-none">
+                            <button onclick="addGlobalCycle()" class="bg-slate-800 text-white px-3 py-1 rounded-md text-xs font-medium hover:bg-slate-900 transition">Añadir</button>
+                        </div>
+                    </div>
+
+                    <div class="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                        <h3 class="font-medium text-xs text-slate-600 mb-1.5">2. Alta de Elemento / Persona</h3>
+                        <div class="flex gap-2">
+                            <input type="text" id="new-user-name" placeholder="Nombre" class="flex-1 px-2.5 py-1 text-xs rounded-md border focus:ring-1 focus:ring-slate-400 outline-none">
+                            <button onclick="addUser()" class="bg-slate-800 text-white px-3 py-1 rounded-md text-xs font-medium hover:bg-slate-900 transition">Añadir</button>
+                        </div>
                     </div>
                 </div>
 
-                <div class="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                    <h3 class="font-medium text-xs text-slate-600 mb-1.5">2. Alta de Usuario</h3>
-                    <div class="flex gap-2">
-                        <input type="text" id="new-user-name" placeholder="Nombre" class="flex-1 px-2.5 py-1 text-xs rounded-md border focus:ring-1 focus:ring-slate-400 outline-none">
-                        <button onclick="addUser()" class="bg-slate-800 text-white px-3 py-1 rounded-md text-xs font-medium hover:bg-slate-900 transition">Añadir</button>
-                    </div>
+                <div>
+                    <h3 class="font-medium text-xs text-slate-600 mb-2">3. Gestionar Historial</h3>
+                    <div id="user-buttons" class="flex flex-wrap gap-1.5 mb-3"></div>
+                    <div id="user-editor" class="hidden bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2"></div>
                 </div>
             </div>
 
-            <div>
-                <h3 class="font-medium text-xs text-slate-600 mb-2">3. Gestionar Pagos por Usuario</h3>
-                <div id="user-buttons" class="flex flex-wrap gap-1.5 mb-3"></div>
-                <div id="user-editor" class="hidden bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2"></div>
-            </div>
+            <div class="space-y-3" id="users-container"></div>
         </div>
 
-        <div class="space-y-3" id="users-container"></div>
     </div>
 </body>
 </html>
