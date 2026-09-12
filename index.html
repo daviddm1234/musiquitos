@@ -39,7 +39,7 @@
         // Colección principal "David" -> Documento del proyecto activo
         const docRef = doc(db, "David", currentAppId);
 
-        const ADMIN_PIN_HASH = "14a995516254907ded5af55c8314b53b6557c894e9f36e961e6c1c8c3889452a"; // pass de admin
+        const ADMIN_PIN_HASH = "14a995516254907ded5af55c8314b53b6557c894e9f36e961e6c1c8c3889452a"; 
         const DEFAULT_AVATAR = "👾";
 
         async function sha256Hex(text) {
@@ -53,6 +53,17 @@
             return String(str ?? '').replace(/[&<>"']/g, (c) => ({
                 '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
             }[c]));
+        }
+
+        // Da formato a un importe numérico como "20 €" o "45,50 €"
+        function hasAmount(h) {
+            return h.amount !== undefined && h.amount !== null && h.amount !== '';
+        }
+        function formatAmount(amount) {
+            const num = Number(amount);
+            if (isNaN(num)) return '';
+            const formatted = Number.isInteger(num) ? String(num) : num.toFixed(2).replace('.', ',');
+            return `${formatted} €`;
         }
 
         // Plantillas iniciales automáticas solo por si el proyecto es completamente nuevo en Firebase
@@ -164,9 +175,12 @@
 
         window.addGlobalCycle = function() {
             const input = document.getElementById('cycle-name');
+            const amountInput = document.getElementById('cycle-amount');
             if (!input.value.trim()) return;
-            currentDb.users.forEach(u => u.history.push({ title: input.value.trim(), paid: false, paidAt: "" }));
+            const amount = amountInput.value.trim() !== '' ? Number(amountInput.value) : '';
+            currentDb.users.forEach(u => u.history.push({ title: input.value.trim(), paid: false, paidAt: "", amount }));
             input.value = '';
+            amountInput.value = '';
             window.saveDataToFirebase();
         };
 
@@ -213,10 +227,10 @@
         }
 
         window.downloadCSV = function() {
-            const rows = [['Elemento/Persona', 'Periodo', 'Estado', 'Fecha de pago']];
+            const rows = [['Elemento/Persona', 'Periodo', 'Estado', 'Fecha de pago', 'Importe']];
             currentDb.users.forEach(user => {
                 (user.history.length ? user.history : [{ title: '', paid: false, paidAt: '' }]).forEach(h => {
-                    rows.push([user.name, h.title, h.paid ? 'Pagado' : 'Pendiente', h.paidAt || '']);
+                    rows.push([user.name, h.title, h.paid ? 'Pagado' : 'Pendiente', h.paidAt || '', hasAmount(h) ? h.amount : '']);
                 });
             });
             // Separador ";" y BOM UTF-8 para que Excel en español lo abra ya en columnas y con tildes correctas
@@ -235,11 +249,13 @@
             window.saveDataToFirebase();
         };
 
-        window.updateBlockTitle = function(uIdx, hIdx) {
+        window.updateBlock = function(uIdx, hIdx) {
             const newTitle = document.getElementById(`edit-title-${uIdx}-${hIdx}`).value;
             const newDateYMD = document.getElementById(`edit-date-${uIdx}-${hIdx}`).value;
+            const newAmountRaw = document.getElementById(`edit-amount-${uIdx}-${hIdx}`).value;
             currentDb.users[uIdx].history[hIdx].title = newTitle;
             currentDb.users[uIdx].history[hIdx].paidAt = parseToDMY(newDateYMD);
+            currentDb.users[uIdx].history[hIdx].amount = newAmountRaw.trim() !== '' ? Number(newAmountRaw) : '';
             window.saveDataToFirebase();
         };
 
@@ -283,17 +299,17 @@
 
                     if (isAvatarHere) {
                         return `
-                        <div class="flex flex-col items-center justify-center min-w-[115px] h-12 relative z-10">
+                        <div class="flex flex-col items-center justify-center min-w-[145px] h-12 relative z-10">
                             <div class="flex items-center justify-center">${avatarImgHtml}</div>
                         </div>`;
                     } else if (i < lastPaidIdx) {
                         return `
-                        <div class="flex flex-col items-center justify-center min-w-[115px] h-12 relative z-10">
+                        <div class="flex flex-col items-center justify-center min-w-[145px] h-12 relative z-10">
                             <div class="w-3 h-3 rounded-full bg-emerald-500 ring-4 ring-white shadow-sm"></div>
                         </div>`;
                     } else {
                         return `
-                        <div class="flex flex-col items-center justify-center min-w-[115px] h-12 relative z-10">
+                        <div class="flex flex-col items-center justify-center min-w-[145px] h-12 relative z-10">
                             <div class="w-3 h-3 rounded-full bg-slate-300 ring-4 ring-white"></div>
                         </div>`;
                     }
@@ -304,15 +320,17 @@
                     const titleColor = h.paid ? 'text-emerald-900' : 'text-slate-700';
                     const statusText = h.paid ? 'Pagado' : 'Pendiente';
                     const statusColor = h.paid ? 'text-emerald-700 font-medium' : 'text-slate-400';
+                    const dateChip = h.paid && h.paidAt ? `<span class="text-xs text-slate-400 font-mono">${escapeHtml(h.paidAt)}</span>` : '';
+                    const amountChip = hasAmount(h) ? `<span class="text-xs text-slate-500 font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5">${escapeHtml(formatAmount(h.amount))}</span>` : '';
 
                     return `
-                    <div class="flex flex-col min-w-[115px] h-[84px] ${cardBg} border rounded-xl overflow-hidden shadow-sm">
+                    <div class="flex flex-col min-w-[145px] ${cardBg} border rounded-xl overflow-hidden shadow-sm">
                         <div class="px-3 py-2 font-medium text-sm ${titleColor} truncate border-b border-slate-200/50">
                             ${escapeHtml(h.title)}
                         </div>
-                        <div class="flex-1 px-3 py-2 flex flex-col justify-center bg-white/50">
+                        <div class="flex-1 px-3 py-2 flex flex-col justify-center gap-1 bg-white/50">
                             <span class="text-xs ${statusColor}">${statusText}</span>
-                            ${h.paid && h.paidAt ? `<span class="text-xs text-slate-400 font-mono mt-0.5">${escapeHtml(h.paidAt)}</span>` : ''}
+                            <div class="flex items-center gap-1.5 flex-wrap">${dateChip}${amountChip}</div>
                         </div>
                     </div>`;
                 }).join('');
@@ -383,7 +401,8 @@
                     <div class="flex gap-2 items-center flex-wrap">
                         <input type="text" id="edit-title-${selectedUserIndex}-${hIdx}" value="${escapeHtml(h.title)}" class="w-24 px-2.5 py-1 rounded-lg border border-slate-300 outline-none bg-white" placeholder="Título">
                         <input type="date" id="edit-date-${selectedUserIndex}-${hIdx}" value="${parseToYMD(h.paidAt)}" class="w-32 px-2 py-1 rounded-lg border border-slate-300 outline-none text-xs bg-white cursor-pointer">
-                        <button onclick="updateBlockTitle(${selectedUserIndex}, ${hIdx})" class="bg-slate-200 text-slate-700 px-3 py-1 rounded-lg text-xs font-medium hover:bg-slate-300 transition">Guardar</button>
+                        <input type="number" step="0.01" id="edit-amount-${selectedUserIndex}-${hIdx}" value="${hasAmount(h) ? h.amount : ''}" placeholder="Importe €" class="w-24 px-2.5 py-1 rounded-lg border border-slate-300 outline-none bg-white">
+                        <button onclick="updateBlock(${selectedUserIndex}, ${hIdx})" class="bg-slate-200 text-slate-700 px-3 py-1 rounded-lg text-xs font-medium hover:bg-slate-300 transition">Guardar</button>
                     </div>
                     <div class="flex items-center gap-2.5">
                         <button onclick="togglePayment(${selectedUserIndex}, ${hIdx})" class="px-3 py-1.5 rounded-lg text-xs font-medium transition ${h.paid ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'}">
@@ -469,8 +488,9 @@
             <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div class="bg-slate-50 p-4 rounded-xl border border-slate-200">
                     <h3 class="font-medium text-sm text-slate-700 mb-2">1. Crear Período Global</h3>
-                    <div class="flex gap-2">
-                        <input type="text" id="cycle-name" placeholder="Ej: Abril 2026" class="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-300 focus:ring-1 focus:ring-slate-400 outline-none bg-white">
+                    <div class="flex gap-2 flex-wrap">
+                        <input type="text" id="cycle-name" placeholder="Ej: Abril 2026" class="flex-1 min-w-[120px] px-3 py-2 text-sm rounded-lg border border-slate-300 focus:ring-1 focus:ring-slate-400 outline-none bg-white">
+                        <input type="number" id="cycle-amount" step="0.01" placeholder="Importe €" class="w-28 px-3 py-2 text-sm rounded-lg border border-slate-300 focus:ring-1 focus:ring-slate-400 outline-none bg-white">
                         <button onclick="addGlobalCycle()" class="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-900 transition">Lanzar</button>
                     </div>
                 </div>
