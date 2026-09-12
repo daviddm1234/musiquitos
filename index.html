@@ -39,7 +39,7 @@
         // Colección principal "David" -> Documento del proyecto activo
         const docRef = doc(db, "David", currentAppId);
 
-        const ADMIN_PIN_HASH = "14a995516254907ded5af55c8314b53b6557c894e9f36e961e6c1c8c3889452a"; 
+        const ADMIN_PIN_HASH = "14a995516254907ded5af55c8314b53b6557c894e9f36e961e6c1c8c3889452a";
         const DEFAULT_AVATAR = "👾";
 
         async function sha256Hex(text) {
@@ -238,6 +238,31 @@
             triggerDownload(csvContent, 'text/csv;charset=utf-8;', `${currentDb.appName || 'datos'}-${getTodayYMD()}.csv`);
         };
 
+        // Adjunta el backup como archivo real usando el panel nativo de "compartir" del dispositivo
+        // (así se puede elegir Gmail/Correo/WhatsApp... y el archivo va como adjunto de verdad, no como texto)
+        window.shareBackup = async function() {
+            const dataStr = JSON.stringify(currentDb, null, 2);
+            const filename = `${currentDb.appName || 'backup'}-${getTodayYMD()}.json`;
+            const file = new File([dataStr], filename, { type: 'application/json' });
+
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                try {
+                    await navigator.share({
+                        files: [file],
+                        title: `Backup ${currentDb.appName || 'Proyecto'}`,
+                        text: 'Copia de seguridad de los datos'
+                    });
+                } catch (e) {
+                    if (e.name !== 'AbortError') {
+                        triggerDownload(dataStr, 'application/json', filename);
+                    }
+                }
+            } else {
+                alert('Este navegador no permite adjuntar el archivo directamente. Se descargará: adjúntalo a mano en tu email.');
+                triggerDownload(dataStr, 'application/json', filename);
+            }
+        };
+
         window.selectUser = function(idx) {
             selectedUserIndex = idx;
             render();
@@ -275,6 +300,40 @@
         window.deleteBlock = function(uIdx, hIdx) {
             currentDb.users[uIdx].history.splice(hIdx, 1);
             window.saveDataToFirebase();
+        };
+
+        window.triggerImport = function() {
+            document.getElementById('import-file-input').click();
+        };
+
+        window.handleImportFile = function(event) {
+            const file = event.target.files[0];
+            event.target.value = ''; // permite volver a elegir el mismo archivo más adelante si hace falta
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                let parsed;
+                try {
+                    parsed = JSON.parse(e.target.result);
+                } catch (err) {
+                    alert('No se ha podido leer el archivo. Asegúrate de que es un backup .json exportado desde esta app.');
+                    return;
+                }
+                if (!parsed || !Array.isArray(parsed.users)) {
+                    alert('El archivo no tiene el formato esperado (falta la lista de "users").');
+                    return;
+                }
+                const ok = confirm(`Vas a reemplazar TODOS los datos actuales de "${currentDb.appName}" por los del archivo importado.\n\nEsta acción no se puede deshacer. ¿Continuar?`);
+                if (!ok) return;
+
+                currentDb = parsed;
+                selectedUserIndex = null;
+                window.saveDataToFirebase();
+                render();
+                alert('Datos importados correctamente.');
+            };
+            reader.readAsText(file);
         };
 
         // --- RENDERIZADO VISUAL ---
@@ -449,7 +508,10 @@
                 <h2 class="text-base font-semibold text-slate-800">⚙️ Panel de Administración</h2>
                 <div class="flex flex-wrap gap-2">
                     <button onclick="backupData()" class="bg-slate-100 text-slate-600 hover:bg-slate-200 px-3.5 py-1.5 rounded-lg text-sm font-medium transition">
-                        📧 Por email
+                        📧 Por email (texto)
+                    </button>
+                    <button onclick="shareBackup()" class="bg-slate-100 text-slate-600 hover:bg-slate-200 px-3.5 py-1.5 rounded-lg text-sm font-medium transition">
+                        📤 Adjuntar y Enviar
                     </button>
                     <button onclick="downloadJSON()" class="bg-slate-100 text-slate-600 hover:bg-slate-200 px-3.5 py-1.5 rounded-lg text-sm font-medium transition">
                         ⬇️ Descargar JSON
@@ -457,6 +519,10 @@
                     <button onclick="downloadCSV()" class="bg-slate-100 text-slate-600 hover:bg-slate-200 px-3.5 py-1.5 rounded-lg text-sm font-medium transition">
                         📊 Exportar a Excel (CSV)
                     </button>
+                    <button onclick="triggerImport()" class="bg-slate-100 text-slate-600 hover:bg-slate-200 px-3.5 py-1.5 rounded-lg text-sm font-medium transition">
+                        📥 Importar Backup
+                    </button>
+                    <input type="file" id="import-file-input" accept=".json,application/json" class="hidden" onchange="handleImportFile(event)">
                 </div>
             </div>
 
