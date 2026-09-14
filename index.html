@@ -63,7 +63,7 @@
             const num = Number(amount);
             if (isNaN(num)) return '';
             const formatted = Number.isInteger(num) ? String(num) : num.toFixed(2).replace('.', ',');
-            return `${formatted} €`;
+            return `${formatted}€`;
         }
 
         // Plantillas iniciales automáticas solo por si el proyecto es completamente nuevo en Firebase
@@ -98,7 +98,8 @@
             users: []
         };
 
-        let isAdmin = false;
+        // Si ya se accedió antes como admin en este mismo navegador/móvil, se restaura sin pedir el PIN de nuevo
+        let isAdmin = localStorage.getItem('adminSession') === 'true';
         let selectedUserIndex = null;
 
         // --- MANEJO DE FECHAS Y CALENDARIO ---
@@ -152,16 +153,14 @@
                 const pinHash = await sha256Hex(pin);
                 if (pinHash === ADMIN_PIN_HASH) {
                     isAdmin = true;
-                    document.getElementById('admin-panel').classList.remove('hidden');
-                    document.getElementById('admin-btn').textContent = "Cerrar Modo Admin";
+                    localStorage.setItem('adminSession', 'true');
                 } else {
                     alert("PIN incorrecto.");
                 }
             } else {
                 isAdmin = false;
                 selectedUserIndex = null;
-                document.getElementById('admin-panel').classList.add('hidden');
-                document.getElementById('admin-btn').textContent = "Acceso Admin";
+                localStorage.removeItem('adminSession');
             }
             render();
         };
@@ -341,6 +340,10 @@
             document.getElementById('header-title').textContent = currentDb.appName || "Proyecto";
             document.getElementById('header-icon').textContent = currentDb.icon || "🎸";
 
+            // Refleja el estado de admin (incluida la sesión restaurada desde localStorage al cargar la página)
+            document.getElementById('admin-panel').classList.toggle('hidden', !isAdmin);
+            document.getElementById('admin-btn').textContent = isAdmin ? "Cerrar Modo Admin" : "Acceso Admin";
+
             const container = document.getElementById('users-container');
             container.innerHTML = '';
 
@@ -361,7 +364,7 @@
                         <div class="flex flex-col items-center justify-center min-w-[145px] h-12 relative z-10">
                             <div class="flex items-center justify-center">${avatarImgHtml}</div>
                         </div>`;
-                    } else if (i < lastPaidIdx) {
+                    } else if (h.paid) {
                         return `
                         <div class="flex flex-col items-center justify-center min-w-[145px] h-12 relative z-10">
                             <div class="w-3 h-3 rounded-full bg-emerald-500 ring-4 ring-white shadow-sm"></div>
@@ -380,7 +383,7 @@
                     const statusText = h.paid ? 'Pagado' : 'Pendiente';
                     const statusColor = h.paid ? 'text-emerald-700 font-medium' : 'text-slate-400';
                     const dateChip = h.paid && h.paidAt ? `<span class="text-xs text-slate-400 font-mono">${escapeHtml(h.paidAt)}</span>` : '';
-                    const amountChip = hasAmount(h) ? `<span class="text-xs text-slate-500 font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5">${escapeHtml(formatAmount(h.amount))}</span>` : '';
+                    const amountChip = hasAmount(h) ? `<span class="text-xs text-slate-500 font-mono bg-white/80 border border-slate-200 rounded px-1.5 py-0.5">${escapeHtml(formatAmount(h.amount))}</span>` : '';
 
                     return `
                     <div class="flex flex-col min-w-[145px] ${cardBg} border rounded-xl overflow-hidden shadow-sm">
