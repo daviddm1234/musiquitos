@@ -3,10 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gestor de Pagos - Colección David</title>
+    <title>David - Gestor de Proyectos</title>
+
     <!-- Favicon -->
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎸</text></svg>">
+
     <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Oculta la barra de scroll pero mantiene el desplazamiento -->
     <style>
         .hide-scroll::-webkit-scrollbar { display: none; }
         .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
@@ -14,31 +18,91 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-        // Tus credenciales actualizadas
         const firebaseConfig = {
-            apiKey: "AIzaSyCZsiOVc-wq6tDl3mHDVwo6nTRhx25-Qw8",
-            authDomain: "musiquitos-e7351.firebaseapp.com",
-            projectId: "musiquitos-e7351",
-            storageBucket: "musiquitos-e7351.firebasestorage.app",
-            messagingSenderId: "155903440836",
-            appId: "1:155903440836:web:20c4ad7545a8974bd29691"
+          apiKey: "AIzaSyCZsiOVc-wq6tDl3mHDVwo6nTRhx25-Qw8",
+          authDomain: "musiquitos-e7351.firebaseapp.com",
+          projectId: "musiquitos-e7351",
+          storageBucket: "musiquitos-e7351.firebasestorage.app",
+          messagingSenderId: "155903440836",
+          appId: "1:155903440836:web:f2f1faeb2afaa741d29691"
         };
 
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        // --- LECTURA DE LA COLECCIÓN "David" ---
-        const davidCollectionRef = collection(db, "David");
+        // Proyecto activo según la URL (?app=musiquitos, ?app=garaje, etc. Por defecto: musiquitos)
+        const urlParams = new URLSearchParams(window.location.search);
+        const currentAppId = urlParams.get('app') || 'musiquitos';
 
+        // Colección principal "David" -> Documento del proyecto activo
+        const docRef = doc(db, "David", currentAppId);
+
+        const ADMIN_PIN_HASH = "14a995516254907ded5af55c8314b53b6557c894e9f36e961e6c1c8c3889452a";
         const DEFAULT_AVATAR = "👾";
-        const ADMIN_PIN = "maumau";
+
+        async function sha256Hex(text) {
+            const data = new TextEncoder().encode(text);
+            const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+            return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        // Evita que un nombre/título con caracteres especiales (< > " ') rompa el HTML generado
+        function escapeHtml(str) {
+            return String(str ?? '').replace(/[&<>"']/g, (c) => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[c]));
+        }
+
+        // Da formato a un importe numérico como "20 €" o "45,50 €"
+        function hasAmount(h) {
+            return h.amount !== undefined && h.amount !== null && h.amount !== '';
+        }
+        function formatAmount(amount) {
+            const num = Number(amount);
+            if (isNaN(num)) return '';
+            const formatted = Number.isInteger(num) ? String(num) : num.toFixed(2).replace('.', ',');
+            return `${formatted}€`;
+        }
+
+        // Plantillas iniciales automáticas solo por si el proyecto es completamente nuevo en Firebase
+        const appPresets = {
+            musiquitos: {
+                appName: "Musiquitos",
+                icon: "🎸",
+                users: [
+                    { name: "David", avatar: DEFAULT_AVATAR, history: [{ title: "Enero", paid: true, paidAt: "15/01/2026" }, { title: "Febrero", paid: false, paidAt: "" }] },
+                    { name: "Amigo 1", avatar: DEFAULT_AVATAR, history: [{ title: "Enero", paid: false, paidAt: "" }, { title: "Febrero", paid: false, paidAt: "" }] }
+                ]
+            },
+            garaje: {
+                appName: "Plaza de Garaje",
+                icon: "🚗",
+                users: [
+                    { name: "Inquilino 1", avatar: "🚗", history: [{ title: "Enero", paid: true, paidAt: "01/01/2026" }, { title: "Febrero", paid: true, paidAt: "01/02/2026" }] }
+                ]
+            },
+            salud: {
+                appName: "Historial de Salud",
+                icon: "🏥",
+                users: [
+                    { name: "David", avatar: "🩺", history: [{ title: "Revisión Anual", paid: true, paidAt: "10/05/2026" }] }
+                ]
+            }
+        };
+
+        let currentDb = appPresets[currentAppId] || {
+            appName: currentAppId.charAt(0).toUpperCase() + currentAppId.slice(1),
+            icon: "📋",
+            users: []
+        };
+
+        // Si ya se accedió antes como admin en este mismo navegador/móvil, se restaura sin pedir el PIN de nuevo
         let isAdmin = localStorage.getItem('adminSession') === 'true';
         let selectedUserIndex = null;
-        let activeCategoryId = "musiquitos";
-        let categoriesList = [];
 
+        // --- MANEJO DE FECHAS Y CALENDARIO ---
         function getTodayYMD() {
             const today = new Date();
             const dd = String(today.getDate()).padStart(2, '0');
@@ -61,77 +125,34 @@
             return ymd;
         }
 
-        // Leer todos los documentos de la colección "David" en tiempo real
-        onSnapshot(davidCollectionRef, (snapshot) => {
-            categoriesList = [];
-            snapshot.forEach((docSnap) => {
-                const data = docSnap.data();
-                const docId = docSnap.id;
-                const catName = data.name || (docId.charAt(0).toUpperCase() + docId.slice(1));
-                categoriesList.push({
-                    id: docId,
-                    name: catName,
-                    users: data.users || []
-                });
-            });
-
-            if (!categoriesList.find(c => c.id === activeCategoryId) && categoriesList.length > 0) {
-                activeCategoryId = categoriesList[0].id;
+        // --- CONEXIÓN Y SINCRONIZACIÓN CON FIREBASE ---
+        onSnapshot(docRef, (docSnap) => {
+            if (docSnap.exists()) {
+                currentDb = docSnap.data();
+            } else {
+                setDoc(docRef, currentDb);
             }
-
             render();
-        }, (error) => {
-            console.error("Error al conectar con Firestore:", error);
-            alert("Error de conexión con Firebase. Revisa las reglas en la consola.");
         });
 
-        window.saveActiveCategory = async function() {
-            const currentCat = getActiveCat();
-            if (!currentCat) return;
+        window.saveDataToFirebase = async function() {
             try {
-                const targetDocRef = doc(db, "David", currentCat.id);
-                await setDoc(targetDocRef, {
-                    name: currentCat.name,
-                    users: currentCat.users
-                }, { merge: true });
+                await setDoc(docRef, currentDb);
             } catch (e) {
-                console.error("Error al guardar en Firebase: ", e);
-                alert("Error al guardar cambios.");
+                console.error("Error al guardar en Firebase:", e);
             }
         };
 
-        window.switchCategory = function(catId) {
-            activeCategoryId = catId;
-            selectedUserIndex = null;
-            render();
-        };
-
-        window.addCategory = async function() {
-            const input = document.getElementById('new-cat-name');
-            if (!input.value.trim()) return;
-            const catName = input.value.trim();
-            const catId = catName.toLowerCase().replace(/\s+/g, '-');
-            
-            try {
-                const targetDocRef = doc(db, "David", catId);
-                await setDoc(targetDocRef, {
-                    name: catName,
-                    users: []
-                });
-                activeCategoryId = catId;
-                input.value = '';
-            } catch (e) {
-                console.error("Error al crear categoría: ", e);
-            }
-        };
-
-        window.handleAdminAccess = function() {
+        // --- MODO ADMINISTRADOR Y NAVEGACIÓN ENTRE PROYECTOS ---
+        window.handleAdminAccess = async function() {
             if (!isAdmin) {
                 const pin = prompt("Introduce el PIN de Administrador:");
-                if (pin === ADMIN_PIN) {
+                if (pin === null) return;
+                const pinHash = await sha256Hex(pin);
+                if (pinHash === ADMIN_PIN_HASH) {
                     isAdmin = true;
                     localStorage.setItem('adminSession', 'true');
-                } else if (pin !== null) {
+                } else {
                     alert("PIN incorrecto.");
                 }
             } else {
@@ -142,29 +163,96 @@
             render();
         };
 
-        function getActiveCat() {
-            return categoriesList.find(c => c.id === activeCategoryId) || categoriesList[0];
-        }
+        window.launchNewProject = function() {
+            const nameInput = document.getElementById('new-project-id').value.trim();
+            if (!nameInput) return;
+            const cleanId = nameInput.toLowerCase().replace(/[^a-z0-9]/g, '-');
+            window.location.href = `?app=${cleanId}`;
+        };
 
         window.addGlobalCycle = function() {
             const input = document.getElementById('cycle-name');
+            const amountInput = document.getElementById('cycle-amount');
             if (!input.value.trim()) return;
-            const activeCat = getActiveCat();
-            if (!activeCat) return;
-            activeCat.users.forEach(u => u.history.push({ title: input.value.trim(), paid: false, paidAt: "" }));
+            const amount = amountInput.value.trim() !== '' ? Number(amountInput.value) : '';
+            currentDb.users.forEach(u => u.history.push({ title: input.value.trim(), paid: false, paidAt: "", amount }));
             input.value = '';
-            window.saveActiveCategory();
+            amountInput.value = '';
+            window.saveDataToFirebase();
         };
 
         window.addUser = function() {
             const input = document.getElementById('new-user-name');
             if (!input.value.trim()) return;
-            const activeCat = getActiveCat();
-            if (!activeCat) return;
-            const cycles = activeCat.users.length > 0 ? activeCat.users[0].history.map(h => ({ title: h.title, paid: false, paidAt: "" })) : [];
-            activeCat.users.push({ name: input.value.trim(), avatar: DEFAULT_AVATAR, history: cycles });
+            const cycles = currentDb.users.length > 0 ? currentDb.users[0].history.map(h => ({ title: h.title, paid: false, paidAt: "" })) : [];
+            currentDb.users.push({ name: input.value.trim(), avatar: DEFAULT_AVATAR, history: cycles });
             input.value = '';
-            window.saveActiveCategory();
+            window.saveDataToFirebase();
+        };
+
+        window.backupData = function() {
+            const dataStr = JSON.stringify(currentDb, null, 2);
+            const email = "davidenpelotas@hotmail.com";
+            const subject = encodeURIComponent(`Backup ${currentDb.appName || 'Proyecto'}`);
+            const body = encodeURIComponent("Copia de seguridad de los datos:\n\n" + dataStr);
+            window.location.href = `mailto:${email}?subject=${subject}&body=${body}`;
+        };
+
+        function triggerDownload(content, mimeType, filename) {
+            const blob = new Blob([content], { type: mimeType });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        window.downloadJSON = function() {
+            const dataStr = JSON.stringify(currentDb, null, 2);
+            triggerDownload(dataStr, 'application/json', `${currentDb.appName || 'backup'}-${getTodayYMD()}.json`);
+        };
+
+        function csvEscape(value) {
+            const str = String(value ?? '');
+            if (/[";\n]/.test(str)) return '"' + str.replace(/"/g, '""') + '"';
+            return str;
+        }
+
+        window.downloadCSV = function() {
+            const rows = [['Elemento/Persona', 'Periodo', 'Estado', 'Fecha de pago', 'Importe']];
+            currentDb.users.forEach(user => {
+                (user.history.length ? user.history : [{ title: '', paid: false, paidAt: '' }]).forEach(h => {
+                    rows.push([user.name, h.title, h.paid ? 'Pagado' : 'Pendiente', h.paidAt || '', hasAmount(h) ? h.amount : '']);
+                });
+            });
+            const csvContent = '\uFEFF' + rows.map(r => r.map(csvEscape).join(';')).join('\n');
+            triggerDownload(csvContent, 'text/csv;charset=utf-8;', `${currentDb.appName || 'datos'}-${getTodayYMD()}.csv`);
+        };
+
+        window.shareBackup = async function() {
+            const dataStr = JSON.stringify(currentDb, null, 2);
+            const filename = `${currentDb.appName || 'backup'}-${getTodayYMD()}.json`;
+            const file = new File([dataStr], filename, { type: 'application/json' });
+
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                try {
+                    await navigator.share({
+                        files: [file],
+                        title: `Backup ${currentDb.appName || 'Proyecto'}`,
+                        text: 'Copia de seguridad de los datos'
+                    });
+                } catch (e) {
+                    if (e.name !== 'AbortError') {
+                        triggerDownload(dataStr, 'application/json', filename);
+                    }
+                }
+            } else {
+                alert('Este navegador no permite adjuntar el archivo directamente. Se descargará: adjúntalo a mano en tu email.');
+                triggerDownload(dataStr, 'application/json', filename);
+            }
         };
 
         window.selectUser = function(idx) {
@@ -173,24 +261,23 @@
         };
 
         window.updateUserHeader = function(idx) {
-            const activeCat = getActiveCat();
-            activeCat.users[idx].name = document.getElementById(`edit-name-${idx}`).value;
-            activeCat.users[idx].avatar = document.getElementById(`edit-img-${idx}`).value;
-            window.saveActiveCategory();
+            currentDb.users[idx].name = document.getElementById(`edit-name-${idx}`).value;
+            currentDb.users[idx].avatar = document.getElementById(`edit-img-${idx}`).value;
+            window.saveDataToFirebase();
         };
 
-        window.updateBlockTitle = function(uIdx, hIdx) {
-            const activeCat = getActiveCat();
+        window.updateBlock = function(uIdx, hIdx) {
             const newTitle = document.getElementById(`edit-title-${uIdx}-${hIdx}`).value;
             const newDateYMD = document.getElementById(`edit-date-${uIdx}-${hIdx}`).value;
-            activeCat.users[uIdx].history[hIdx].title = newTitle;
-            activeCat.users[uIdx].history[hIdx].paidAt = parseToDMY(newDateYMD);
-            window.saveActiveCategory();
+            const newAmountRaw = document.getElementById(`edit-amount-${uIdx}-${hIdx}`).value;
+            currentDb.users[uIdx].history[hIdx].title = newTitle;
+            currentDb.users[uIdx].history[hIdx].paidAt = parseToDMY(newDateYMD);
+            currentDb.users[uIdx].history[hIdx].amount = newAmountRaw.trim() !== '' ? Number(newAmountRaw) : '';
+            window.saveDataToFirebase();
         };
 
         window.togglePayment = function(uIdx, hIdx) {
-            const activeCat = getActiveCat();
-            const item = activeCat.users[uIdx].history[hIdx];
+            const item = currentDb.users[uIdx].history[hIdx];
             item.paid = !item.paid;
             if (item.paid && !item.paidAt) {
                 const today = new Date();
@@ -199,96 +286,113 @@
                 const yyyy = today.getFullYear();
                 item.paidAt = `${dd}/${mm}/${yyyy}`;
             }
-            window.saveActiveCategory();
+            window.saveDataToFirebase();
         };
 
         window.deleteBlock = function(uIdx, hIdx) {
-            const activeCat = getActiveCat();
-            activeCat.users[uIdx].history.splice(hIdx, 1);
-            window.saveActiveCategory();
+            currentDb.users[uIdx].history.splice(hIdx, 1);
+            window.saveDataToFirebase();
         };
 
+        window.triggerImport = function() {
+            document.getElementById('import-file-input').click();
+        };
+
+        window.handleImportFile = function(event) {
+            const file = event.target.files[0];
+            event.target.value = ''; 
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                let parsed;
+                try {
+                    parsed = JSON.parse(e.target.result);
+                } catch (err) {
+                    alert('No se ha podido leer el archivo. Asegúrate de que es un backup .json exportado desde esta app.');
+                    return;
+                }
+                if (!parsed || !Array.isArray(parsed.users)) {
+                    alert('El archivo no tiene el formato esperado (falta la lista de "users").');
+                    return;
+                }
+                const ok = confirm(`Vas a reemplazar TODOS los datos actuales de "${currentDb.appName}" por los del archivo importado.\n\nEsta acción no se puede deshacer. ¿Continuar?`);
+                if (!ok) return;
+
+                currentDb = parsed;
+                selectedUserIndex = null;
+                window.saveDataToFirebase();
+                render();
+                alert('Datos importados correctamente.');
+            };
+            reader.readAsText(file);
+        };
+
+        // --- RENDERIZADO VISUAL ---
         function render() {
+            document.getElementById('header-title').textContent = currentDb.appName || "Proyecto";
+            document.getElementById('header-icon').textContent = currentDb.icon || "🎸";
+
+            // Refleja el estado de admin
             document.getElementById('admin-panel').classList.toggle('hidden', !isAdmin);
             document.getElementById('admin-btn').textContent = isAdmin ? "Cerrar Modo Admin" : "Acceso Admin";
-
-            const catNav = document.getElementById('category-nav');
-            if (categoriesList.length === 0) {
-                catNav.innerHTML = `<span class="text-xs text-slate-400">Cargando datos de la colección David...</span>`;
-            } else {
-                catNav.innerHTML = categoriesList.map(cat => `
-                    <button onclick="switchCategory('${cat.id}')" class="px-4 py-2 rounded-xl text-sm font-medium transition ${cat.id === activeCategoryId ? 'bg-slate-900 text-white shadow-sm' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'}">
-                        ${cat.name}
-                    </button>
-                `).join('');
-            }
-
-            const activeCat = getActiveCat();
-            if (!activeCat) {
-                document.getElementById('current-category-title').textContent = "Cargando...";
-                document.getElementById('users-container').innerHTML = '';
-                return;
-            }
-
-            document.getElementById('current-category-title').textContent = activeCat.name;
 
             const container = document.getElementById('users-container');
             container.innerHTML = '';
 
-            if (activeCat.users.length === 0) {
-                container.innerHTML = `<div class="bg-white p-8 rounded-2xl text-center text-slate-400 border border-slate-200">No hay usuarios agregados en esta pestaña aún.</div>`;
-            }
-
-            activeCat.users.forEach((user, userIdx) => {
+            currentDb.users.forEach((user, userIdx) => {
                 let lastPaidIdx = -1;
                 user.history.forEach((h, i) => { if(h.paid) lastPaidIdx = i; });
 
                 const avatarContent = user.avatar || DEFAULT_AVATAR;
-                const avatarImgHtml = avatarContent.startsWith('http') || avatarContent.endsWith('.jpg') || avatarContent.endsWith('.png') 
-                    ? `<img src="${avatarContent}" class="w-8 h-8 rounded-full object-cover shadow bg-white ring-2 ring-emerald-400">` 
-                    : `<span class="text-2xl drop-shadow">${avatarContent}</span>`;
+                const avatarImgHtml = avatarContent.startsWith('http') || avatarContent.endsWith('.jpg') || avatarContent.endsWith('.png')
+                    ? `<img src="${escapeHtml(avatarContent)}" class="w-8 h-8 rounded-full object-cover shadow bg-white ring-2 ring-emerald-500">`
+                    : `<span class="text-2xl drop-shadow">${escapeHtml(avatarContent)}</span>`;
 
                 const milestoneNodesHtml = user.history.map((h, i) => {
                     const isAvatarHere = (i === lastPaidIdx) || (lastPaidIdx === -1 && i === 0);
+
                     if (isAvatarHere) {
                         return `
-                        <div class="flex flex-col items-center justify-center min-w-[115px] h-12 relative z-10">
+                        <div class="flex flex-col items-center justify-center min-w-[145px] h-12 relative z-10">
                             <div class="flex items-center justify-center">${avatarImgHtml}</div>
                         </div>`;
-                    } else if (i < lastPaidIdx) {
+                    } else if (h.paid) {
                         return `
-                        <div class="flex flex-col items-center justify-center min-w-[115px] h-12 relative z-10">
-                            <div class="w-3 h-3 rounded-full bg-emerald-400 ring-4 ring-white shadow-sm"></div>
+                        <div class="flex flex-col items-center justify-center min-w-[145px] h-12 relative z-10">
+                            <div class="w-3 h-3 rounded-full bg-emerald-500 ring-4 ring-white shadow-sm"></div>
                         </div>`;
                     } else {
                         return `
-                        <div class="flex flex-col items-center justify-center min-w-[115px] h-12 relative z-10">
+                        <div class="flex flex-col items-center justify-center min-w-[145px] h-12 relative z-10">
                             <div class="w-3 h-3 rounded-full bg-slate-300 ring-4 ring-white"></div>
                         </div>`;
                     }
                 }).join('');
 
                 const cardsHtml = user.history.map((h) => {
-                    const cardBg = h.paid ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-100/90 border-slate-200';
+                    const cardBg = h.paid ? 'bg-emerald-100/70 border-emerald-300' : 'bg-slate-100/80 border-slate-200';
                     const titleColor = h.paid ? 'text-emerald-900' : 'text-slate-700';
                     const statusText = h.paid ? 'Pagado' : 'Pendiente';
-                    const statusColor = h.paid ? 'text-emerald-600 font-medium' : 'text-slate-400';
+                    const statusColor = h.paid ? 'text-emerald-700 font-medium' : 'text-slate-400';
+                    const dateChip = h.paid && h.paidAt ? `<span class="text-xs text-slate-400 font-mono">${escapeHtml(h.paidAt)}</span>` : '';
+                    const amountChip = hasAmount(h) ? `<span class="text-xs text-slate-500 font-mono bg-white/80 border border-slate-200 rounded px-1.5 py-0.5">${escapeHtml(formatAmount(h.amount))}</span>` : '';
 
                     return `
-                    <div class="flex flex-col min-w-[115px] h-[84px] ${cardBg} border rounded-xl overflow-hidden shadow-sm">
+                    <div class="flex flex-col min-w-[145px] ${cardBg} border rounded-xl overflow-hidden shadow-sm">
                         <div class="px-3 py-2 font-medium text-sm ${titleColor} truncate border-b border-slate-200/50">
-                            ${h.title}
+                            ${escapeHtml(h.title)}
                         </div>
-                        <div class="flex-1 px-3 py-2 flex flex-col justify-center bg-white/60">
+                        <div class="flex-1 px-3 py-2 flex flex-col justify-center gap-1 bg-white/50">
                             <span class="text-xs ${statusColor}">${statusText}</span>
-                            ${h.paid && h.paidAt ? `<span class="text-xs font-mono mt-0.5 text-emerald-700">${h.paidAt}</span>` : ''}
+                            <div class="flex items-center gap-1.5 flex-wrap">${dateChip}${amountChip}</div>
                         </div>
                     </div>`;
                 }).join('');
 
                 container.innerHTML += `
                     <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/80 flex flex-col gap-4">
-                        <div class="font-medium text-slate-900 text-xl tracking-wide">${user.name}</div>
+                        <div class="font-medium text-slate-900 text-xl tracking-wide">${escapeHtml(user.name)}</div>
                         <div id="scroll-container-${userIdx}" class="overflow-x-auto w-full scroll-smooth hide-scroll px-1">
                             <div class="flex flex-col min-w-max">
                                 <div class="relative flex items-center mb-1">
@@ -305,19 +409,17 @@
             });
 
             setTimeout(() => {
-                if (activeCat && activeCat.users) {
-                    activeCat.users.forEach((_, idx) => {
-                        const elScroll = document.getElementById(`scroll-container-${idx}`);
-                        if (elScroll) elScroll.scrollLeft = elScroll.scrollWidth;
-                    });
-                }
+                currentDb.users.forEach((_, idx) => {
+                    const elScroll = document.getElementById(`scroll-container-${idx}`);
+                    if (elScroll) elScroll.scrollLeft = elScroll.scrollWidth;
+                });
             }, 50);
 
             if (isAdmin) {
                 const btnContainer = document.getElementById('user-buttons');
-                btnContainer.innerHTML = activeCat.users.map((u, i) => `
+                btnContainer.innerHTML = currentDb.users.map((u, i) => `
                     <button onclick="selectUser(${i})" class="px-3.5 py-2 rounded-lg text-sm font-medium transition ${selectedUserIndex === i ? 'bg-slate-800 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}">
-                        ${u.name}
+                        ${escapeHtml(u.name)}
                     </button>
                 `).join('');
                 renderUserEditor();
@@ -326,35 +428,35 @@
 
         function renderUserEditor() {
             const editor = document.getElementById('user-editor');
-            const activeCat = getActiveCat();
-            if (selectedUserIndex === null || !activeCat || !activeCat.users[selectedUserIndex]) {
+            if (selectedUserIndex === null || !currentDb.users[selectedUserIndex]) {
                 editor.classList.add('hidden');
                 return;
             }
 
             editor.classList.remove('hidden');
-            const user = activeCat.users[selectedUserIndex];
+            const user = currentDb.users[selectedUserIndex];
 
             const userHeaderHtml = `
-                <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-wrap gap-3 items-end">
+                <div class="bg-slate-50 p-4 rounded-lg border border-slate-200 flex flex-wrap gap-3 items-end">
                     <div>
                         <label class="text-sm block font-medium text-slate-600 mb-1">Nombre</label>
-                        <input type="text" id="edit-name-${selectedUserIndex}" value="${user.name}" class="px-3 py-1.5 rounded-lg border border-slate-300 text-sm w-36 outline-none bg-white">
+                        <input type="text" id="edit-name-${selectedUserIndex}" value="${escapeHtml(user.name)}" class="px-3 py-1.5 rounded-lg border border-slate-300 text-sm w-36 outline-none bg-white">
                     </div>
                     <div class="flex-1 min-w-[160px]">
                         <label class="text-sm block font-medium text-slate-600 mb-1">Avatar (Emoji o URL)</label>
-                        <input type="text" id="edit-img-${selectedUserIndex}" value="${user.avatar || DEFAULT_AVATAR}" class="px-3 py-1.5 rounded-lg border border-slate-300 text-sm w-full outline-none bg-white">
+                        <input type="text" id="edit-img-${selectedUserIndex}" value="${escapeHtml(user.avatar || DEFAULT_AVATAR)}" class="px-3 py-1.5 rounded-lg border border-slate-300 text-sm w-full outline-none bg-white">
                     </div>
                     <button onclick="updateUserHeader(${selectedUserIndex})" class="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-900 transition">Guardar Header</button>
                 </div>
             `;
 
             const blocks = user.history.map((h, hIdx) => `
-                <div class="flex flex-wrap items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-200 gap-3 text-sm">
+                <div class="flex flex-wrap items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-200 gap-2.5 text-sm">
                     <div class="flex gap-2 items-center flex-wrap">
-                        <input type="text" id="edit-title-${selectedUserIndex}-${hIdx}" value="${h.title}" class="w-24 px-2.5 py-1 rounded-lg border border-slate-300 outline-none bg-white">
+                        <input type="text" id="edit-title-${selectedUserIndex}-${hIdx}" value="${escapeHtml(h.title)}" class="w-24 px-2.5 py-1 rounded-lg border border-slate-300 outline-none bg-white" placeholder="Título">
                         <input type="date" id="edit-date-${selectedUserIndex}-${hIdx}" value="${parseToYMD(h.paidAt)}" class="w-32 px-2 py-1 rounded-lg border border-slate-300 outline-none text-xs bg-white cursor-pointer">
-                        <button onclick="updateBlockTitle(${selectedUserIndex}, ${hIdx})" class="bg-slate-200 text-slate-700 px-3 py-1 rounded-lg text-xs font-medium hover:bg-slate-300 transition">Guardar</button>
+                        <input type="number" step="0.01" id="edit-amount-${selectedUserIndex}-${hIdx}" value="${hasAmount(h) ? h.amount : ''}" placeholder="Importe €" class="w-24 px-2.5 py-1 rounded-lg border border-slate-300 outline-none bg-white">
+                        <button onclick="updateBlock(${selectedUserIndex}, ${hIdx})" class="bg-slate-200 text-slate-700 px-3 py-1 rounded-lg text-xs font-medium hover:bg-slate-300 transition">Guardar</button>
                     </div>
                     <div class="flex items-center gap-2.5">
                         <button onclick="togglePayment(${selectedUserIndex}, ${hIdx})" class="px-3 py-1.5 rounded-lg text-xs font-medium transition ${h.paid ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'}">
@@ -366,9 +468,9 @@
             `).join('');
 
             editor.innerHTML = `
-                <h4 class="font-medium text-slate-800 text-base mb-2">Editando: <span class="font-normal text-slate-900">${user.name}</span></h4>
+                <h4 class="font-medium text-slate-800 text-base mb-2">Editando: <span class="font-normal text-slate-900">${escapeHtml(user.name)}</span></h4>
                 ${userHeaderHtml}
-                <div class="space-y-2 mt-4">
+                <div class="space-y-2 mt-3">
                     <h5 class="font-medium text-slate-700 text-sm mb-1.5">Bloques de Pago:</h5>
                     ${blocks || '<p class="text-sm text-slate-400">Sin bloques.</p>'}
                 </div>
@@ -376,61 +478,85 @@
         }
     </script>
 </head>
-<body class="bg-slate-100 text-slate-900 font-sans min-h-screen p-4 md:p-8">
+<body class="bg-slate-100 text-slate-800 font-sans min-h-screen p-4 md:p-8">
 
     <div class="max-w-3xl mx-auto space-y-5">
+
+        <!-- Enlace discreto a Modo Admin -->
         <div class="flex justify-end px-1">
             <button onclick="handleAdminAccess()" id="admin-btn" class="text-sm font-medium text-slate-400 hover:text-slate-700 transition">
                 Acceso Admin
             </button>
         </div>
 
-        <header class="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-slate-200/80 flex flex-col gap-4">
-            <div class="flex items-center justify-between">
-                <h1 id="current-category-title" class="text-3xl font-bold tracking-tight text-slate-900">Cargando...</h1>
+        <!-- Cabecera principal -->
+        <header class="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-slate-200/80 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <span id="header-icon" class="text-3xl">🎸</span>
+                <h1 id="header-title" class="text-3xl font-bold tracking-tight text-slate-900">Musiquitos</h1>
             </div>
-            <div id="category-nav" class="flex flex-wrap gap-2.5 pt-3 border-t border-slate-100"></div>
         </header>
 
+        <!-- PANEL DE ADMINISTRACIÓN OCULTO (solo visible si eres Admin) -->
         <div id="admin-panel" class="hidden bg-white p-6 rounded-2xl shadow-sm border border-slate-300 space-y-6">
-            <div class="flex justify-between items-center border-b pb-3">
-                <h2 class="text-base font-semibold text-slate-800">⚙️ Panel de Administración (Colección David)</h2>
-            </div>
-
-            <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-4">
-                <h3 class="font-medium text-sm text-slate-700 mb-2">Añadir Nuevo Documento / Servicio a la colección David</h3>
-                <div class="flex gap-2.5">
-                    <input type="text" id="new-cat-name" placeholder="Ejemplo: Trastero" class="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-300 focus:ring-1 focus:ring-slate-400 outline-none bg-white">
-                    <button onclick="addCategory()" class="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-900 transition">Crear Documento</button>
+            <div class="flex justify-between items-center border-b pb-3 flex-wrap gap-2">
+                <h2 class="text-base font-semibold text-slate-800">⚙️ Panel de Administración</h2>
+                <div class="flex flex-wrap gap-2">
+                    <button onclick="backupData()" class="bg-slate-100 text-slate-600 hover:bg-slate-200 px-3.5 py-1.5 rounded-lg text-sm font-medium transition">📧 Por email (texto)</button>
+                    <button onclick="shareBackup()" class="bg-slate-100 text-slate-600 hover:bg-slate-200 px-3.5 py-1.5 rounded-lg text-sm font-medium transition">📤 Adjuntar y Enviar</button>
+                    <button onclick="downloadJSON()" class="bg-slate-100 text-slate-600 hover:bg-slate-200 px-3.5 py-1.5 rounded-lg text-sm font-medium transition">⬇️ Descargar JSON</button>
+                    <button onclick="downloadCSV()" class="bg-slate-100 text-slate-600 hover:bg-slate-200 px-3.5 py-1.5 rounded-lg text-sm font-medium transition">📊 Exportar a Excel (CSV)</button>
+                    <button onclick="triggerImport()" class="bg-slate-100 text-slate-600 hover:bg-slate-200 px-3.5 py-1.5 rounded-lg text-sm font-medium transition">📥 Importar Backup</button>
+                    <input type="file" id="import-file-input" accept=".json,application/json" class="hidden" onchange="handleImportFile(event)">
                 </div>
             </div>
 
+            <!-- DIRECTORIO MAESTRO DE PROYECTOS -->
+            <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+                <h3 class="font-medium text-sm text-slate-600 uppercase tracking-wider">🌐 Mis Proyectos en Firebase (David)</h3>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <a href="?app=musiquitos" class="p-4 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition text-center font-medium shadow-sm">🎸 Musiquitos</a>
+                    <a href="?app=garaje" class="p-4 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition text-center font-medium shadow-sm">🚗 Garaje</a>
+                    <a href="?app=salud" class="p-4 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition text-center font-medium shadow-sm">🏥 Salud</a>
+                </div>
+                <div class="flex gap-2 mt-2">
+                    <input type="text" id="new-project-id" placeholder="nuevo-proyecto..." class="flex-1 px-3 py-2 rounded-lg border border-slate-300 text-sm outline-none">
+                    <button onclick="launchNewProject()" class="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-900 transition">Abrir / Crear</button>
+                </div>
+            </div>
+
+            <!-- CONTROLES GLOBALES -->
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div class="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                    <h3 class="font-medium text-sm text-slate-700 mb-2">1. Lanzar Período en esta Pestaña</h3>
-                    <div class="flex gap-2.5">
-                        <input type="text" id="cycle-name" placeholder="Ej: Marzo 2026" class="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-300 focus:ring-1 focus:ring-slate-400 outline-none bg-white">
-                        <button onclick="addGlobalCycle()" class="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-900 transition">Lanzar</button>
+                <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+                    <h3 class="font-medium text-sm text-slate-600">Añadir Nuevo Bloque a Todos</h3>
+                    <div class="flex gap-2">
+                        <input type="text" id="cycle-name" placeholder="Ej: Marzo..." class="flex-1 px-3 py-2 rounded-lg border border-slate-300 text-sm outline-none">
+                        <input type="number" id="cycle-amount" placeholder="€" class="w-16 px-2 py-2 rounded-lg border border-slate-300 text-sm outline-none">
+                        <button onclick="addGlobalCycle()" class="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-900 transition">Añadir</button>
                     </div>
                 </div>
-
-                <div class="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                    <h3 class="font-medium text-sm text-slate-700 mb-2">2. Añadir Persona / Inquilino</h3>
-                    <div class="flex gap-2.5">
-                        <input type="text" id="new-user-name" placeholder="Nombre" class="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-300 focus:ring-1 focus:ring-slate-400 outline-none bg-white">
+                <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+                    <h3 class="font-medium text-sm text-slate-600">Añadir Nueva Persona</h3>
+                    <div class="flex gap-2">
+                        <input type="text" id="new-user-name" placeholder="Nombre..." class="flex-1 px-3 py-2 rounded-lg border border-slate-300 text-sm outline-none">
                         <button onclick="addUser()" class="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-900 transition">Añadir</button>
                     </div>
                 </div>
             </div>
 
-            <div>
-                <h3 class="font-medium text-sm text-slate-700 mb-2.5">3. Editar Persona / Pagos</h3>
-                <div id="user-buttons" class="flex flex-wrap gap-2 mb-4"></div>
-                <div id="user-editor" class="hidden bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3"></div>
+            <!-- EDITOR DE USUARIOS -->
+            <div class="space-y-3">
+                <h3 class="font-medium text-sm text-slate-600">Editar Usuario Específico</h3>
+                <div id="user-buttons" class="flex flex-wrap gap-2"></div>
+                <div id="user-editor" class="hidden mt-4"></div>
             </div>
-        </div>
 
-        <div class="space-y-4" id="users-container"></div>
+        </div> <!-- Fin del Panel de Administración -->
+
+        <!-- Contenedor donde se imprimen los usuarios y las tarjetas para que lo vean todos -->
+        <main id="users-container" class="space-y-4"></main>
+
     </div>
+
 </body>
 </html>
