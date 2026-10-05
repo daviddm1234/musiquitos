@@ -16,13 +16,14 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getFirestore, collection, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
+        // Tus credenciales actualizadas
         const firebaseConfig = {
             apiKey: "AIzaSyCZsiOVc-wq6tDl3mHDVwo6nTRhx25-Qw8",
             authDomain: "musiquitos-e7351.firebaseapp.com",
             projectId: "musiquitos-e7351",
             storageBucket: "musiquitos-e7351.firebasestorage.app",
             messagingSenderId: "155903440836",
-            appId: "1:155903440836:web:f2f1faeb2afaa741d29691"
+            appId: "1:155903440836:web:20c4ad7545a8974bd29691"
         };
 
         const app = initializeApp(firebaseConfig);
@@ -35,7 +36,7 @@
         const ADMIN_PIN = "maumau";
         let isAdmin = localStorage.getItem('adminSession') === 'true';
         let selectedUserIndex = null;
-        let activeCategoryId = "musiquitos"; // ID por defecto
+        let activeCategoryId = "musiquitos";
         let categoriesList = [];
 
         function getTodayYMD() {
@@ -60,13 +61,12 @@
             return ymd;
         }
 
-        // Suscripción en tiempo real a la colección "David"
+        // Leer todos los documentos de la colección "David" en tiempo real
         onSnapshot(davidCollectionRef, (snapshot) => {
             categoriesList = [];
             snapshot.forEach((docSnap) => {
                 const data = docSnap.data();
                 const docId = docSnap.id;
-                // Formatear nombre de categoría
                 const catName = data.name || (docId.charAt(0).toUpperCase() + docId.slice(1));
                 categoriesList.push({
                     id: docId,
@@ -75,15 +75,16 @@
                 });
             });
 
-            // Si no hay categoría activa válida, seleccionar la primera disponible
             if (!categoriesList.find(c => c.id === activeCategoryId) && categoriesList.length > 0) {
                 activeCategoryId = categoriesList[0].id;
             }
 
             render();
+        }, (error) => {
+            console.error("Error al conectar con Firestore:", error);
+            alert("Error de conexión con Firebase. Revisa las reglas en la consola.");
         });
 
-        // Guarda la categoría activa actual en su documento dentro de "David"
         window.saveActiveCategory = async function() {
             const currentCat = getActiveCat();
             if (!currentCat) return;
@@ -211,7 +212,6 @@
             document.getElementById('admin-panel').classList.toggle('hidden', !isAdmin);
             document.getElementById('admin-btn').textContent = isAdmin ? "Cerrar Modo Admin" : "Acceso Admin";
 
-            // Renderizar navegación de pestañas con los documentos de "David"
             const catNav = document.getElementById('category-nav');
             if (categoriesList.length === 0) {
                 catNav.innerHTML = `<span class="text-xs text-slate-400">Cargando datos de la colección David...</span>`;
@@ -225,7 +225,7 @@
 
             const activeCat = getActiveCat();
             if (!activeCat) {
-                document.getElementById('current-category-title').textContent = "Buscando datos...";
+                document.getElementById('current-category-title').textContent = "Cargando...";
                 document.getElementById('users-container').innerHTML = '';
                 return;
             }
@@ -236,7 +236,7 @@
             container.innerHTML = '';
 
             if (activeCat.users.length === 0) {
-                container.innerHTML = `<div class="bg-white p-8 rounded-2xl text-center text-slate-400 border border-slate-200">No hay usuarios agregados en este concepto todavía.</div>`;
+                container.innerHTML = `<div class="bg-white p-8 rounded-2xl text-center text-slate-400 border border-slate-200">No hay usuarios agregados en esta pestaña aún.</div>`;
             }
 
             activeCat.users.forEach((user, userIdx) => {
@@ -304,7 +304,6 @@
                 `;
             });
 
-            // Auto-scroll al final del slider
             setTimeout(() => {
                 if (activeCat && activeCat.users) {
                     activeCat.users.forEach((_, idx) => {
@@ -390,7 +389,6 @@
             <div class="flex items-center justify-between">
                 <h1 id="current-category-title" class="text-3xl font-bold tracking-tight text-slate-900">Cargando...</h1>
             </div>
-            <!-- Pestañas automáticas desde la colección David -->
             <div id="category-nav" class="flex flex-wrap gap-2.5 pt-3 border-t border-slate-100"></div>
         </header>
 
