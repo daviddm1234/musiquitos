@@ -3,11 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gestor de Pagos - Multiconcepto</title>
-    <!-- Favicon usando un emoji SVG -->
+    <title>Gestor de Pagos - Colección David</title>
+    <!-- Favicon -->
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎸</text></svg>">
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- CSS para ocultar la barra de scroll y dar aspecto de Slider nativo -->
     <style>
         .hide-scroll::-webkit-scrollbar { display: none; }
         .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
@@ -15,7 +14,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, collection, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyCZsiOVc-wq6tDl3mHDVwo6nTRhx25-Qw8",
@@ -28,37 +27,16 @@
 
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
-        
-        // --- RUTA ORIGINAL EN FIREBASE (Donde están tus datos reales) ---
-        const docRef = doc(db, "suscripcion", "datos_multiconcepto");
+
+        // --- LECTURA DE LA COLECCIÓN "David" ---
+        const davidCollectionRef = collection(db, "David");
 
         const DEFAULT_AVATAR = "👾";
         const ADMIN_PIN = "maumau";
         let isAdmin = localStorage.getItem('adminSession') === 'true';
         let selectedUserIndex = null;
-
-        const defaultData = {
-            activeCategory: "musiquitos",
-            categories: [
-                {
-                    id: "musiquitos",
-                    name: "Musiquitos 🎸",
-                    users: [
-                        { name: "David", avatar: DEFAULT_AVATAR, history: [{ title: "Enero", paid: true, paidAt: "15/01/2026" }, { title: "Febrero", paid: false, paidAt: "" }] },
-                        { name: "Amigo 1", avatar: DEFAULT_AVATAR, history: [{ title: "Enero", paid: false, paidAt: "" }, { title: "Febrero", paid: false, paidAt: "" }] }
-                    ]
-                },
-                {
-                    id: "garaje",
-                    name: "Plaza de Garaje 🚗",
-                    users: [
-                        { name: "Inquilino 1", avatar: "🚗", history: [{ title: "Enero", paid: true, paidAt: "01/01/2026" }, { title: "Febrero", paid: true, paidAt: "02/02/2026" }] }
-                    ]
-                }
-            ]
-        };
-
-        let currentDb = defaultData;
+        let activeCategoryId = "musiquitos"; // ID por defecto
+        let categoriesList = [];
 
         function getTodayYMD() {
             const today = new Date();
@@ -82,42 +60,68 @@
             return ymd;
         }
 
-        onSnapshot(docRef, (docSnap) => {
-            if (docSnap.exists()) {
-                currentDb = docSnap.data();
-                // Asegurar estructura mínima por si acaso
-                if (!currentDb.categories) currentDb = defaultData;
-            } else {
-                setDoc(docRef, defaultData);
-                currentDb = defaultData;
+        // Suscripción en tiempo real a la colección "David"
+        onSnapshot(davidCollectionRef, (snapshot) => {
+            categoriesList = [];
+            snapshot.forEach((docSnap) => {
+                const data = docSnap.data();
+                const docId = docSnap.id;
+                // Formatear nombre de categoría
+                const catName = data.name || (docId.charAt(0).toUpperCase() + docId.slice(1));
+                categoriesList.push({
+                    id: docId,
+                    name: catName,
+                    users: data.users || []
+                });
+            });
+
+            // Si no hay categoría activa válida, seleccionar la primera disponible
+            if (!categoriesList.find(c => c.id === activeCategoryId) && categoriesList.length > 0) {
+                activeCategoryId = categoriesList[0].id;
             }
+
             render();
         });
 
-        window.saveDataToFirebase = async function() {
+        // Guarda la categoría activa actual en su documento dentro de "David"
+        window.saveActiveCategory = async function() {
+            const currentCat = getActiveCat();
+            if (!currentCat) return;
             try {
-                await setDoc(docRef, currentDb);
+                const targetDocRef = doc(db, "David", currentCat.id);
+                await setDoc(targetDocRef, {
+                    name: currentCat.name,
+                    users: currentCat.users
+                }, { merge: true });
             } catch (e) {
                 console.error("Error al guardar en Firebase: ", e);
-                alert("Error al guardar datos.");
+                alert("Error al guardar cambios.");
             }
         };
 
         window.switchCategory = function(catId) {
-            currentDb.activeCategory = catId;
+            activeCategoryId = catId;
             selectedUserIndex = null;
-            window.saveDataToFirebase();
+            render();
         };
 
-        window.addCategory = function() {
+        window.addCategory = async function() {
             const input = document.getElementById('new-cat-name');
             if (!input.value.trim()) return;
             const catName = input.value.trim();
             const catId = catName.toLowerCase().replace(/\s+/g, '-');
-            currentDb.categories.push({ id: catId, name: catName, users: [] });
-            currentDb.activeCategory = catId;
-            input.value = '';
-            window.saveDataToFirebase();
+            
+            try {
+                const targetDocRef = doc(db, "David", catId);
+                await setDoc(targetDocRef, {
+                    name: catName,
+                    users: []
+                });
+                activeCategoryId = catId;
+                input.value = '';
+            } catch (e) {
+                console.error("Error al crear categoría: ", e);
+            }
         };
 
         window.handleAdminAccess = function() {
@@ -126,7 +130,6 @@
                 if (pin === ADMIN_PIN) {
                     isAdmin = true;
                     localStorage.setItem('adminSession', 'true');
-                    document.getElementById('admin-btn').textContent = "Cerrar Modo Admin";
                 } else if (pin !== null) {
                     alert("PIN incorrecto.");
                 }
@@ -134,32 +137,33 @@
                 isAdmin = false;
                 selectedUserIndex = null;
                 localStorage.removeItem('adminSession');
-                document.getElementById('admin-btn').textContent = "Acceso Admin";
             }
             render();
         };
 
         function getActiveCat() {
-            return currentDb.categories.find(c => c.id === currentDb.activeCategory) || currentDb.categories[0];
+            return categoriesList.find(c => c.id === activeCategoryId) || categoriesList[0];
         }
 
         window.addGlobalCycle = function() {
             const input = document.getElementById('cycle-name');
             if (!input.value.trim()) return;
             const activeCat = getActiveCat();
+            if (!activeCat) return;
             activeCat.users.forEach(u => u.history.push({ title: input.value.trim(), paid: false, paidAt: "" }));
             input.value = '';
-            window.saveDataToFirebase();
+            window.saveActiveCategory();
         };
 
         window.addUser = function() {
             const input = document.getElementById('new-user-name');
             if (!input.value.trim()) return;
             const activeCat = getActiveCat();
+            if (!activeCat) return;
             const cycles = activeCat.users.length > 0 ? activeCat.users[0].history.map(h => ({ title: h.title, paid: false, paidAt: "" })) : [];
             activeCat.users.push({ name: input.value.trim(), avatar: DEFAULT_AVATAR, history: cycles });
             input.value = '';
-            window.saveDataToFirebase();
+            window.saveActiveCategory();
         };
 
         window.selectUser = function(idx) {
@@ -171,7 +175,7 @@
             const activeCat = getActiveCat();
             activeCat.users[idx].name = document.getElementById(`edit-name-${idx}`).value;
             activeCat.users[idx].avatar = document.getElementById(`edit-img-${idx}`).value;
-            window.saveDataToFirebase();
+            window.saveActiveCategory();
         };
 
         window.updateBlockTitle = function(uIdx, hIdx) {
@@ -180,7 +184,7 @@
             const newDateYMD = document.getElementById(`edit-date-${uIdx}-${hIdx}`).value;
             activeCat.users[uIdx].history[hIdx].title = newTitle;
             activeCat.users[uIdx].history[hIdx].paidAt = parseToDMY(newDateYMD);
-            window.saveDataToFirebase();
+            window.saveActiveCategory();
         };
 
         window.togglePayment = function(uIdx, hIdx) {
@@ -194,31 +198,46 @@
                 const yyyy = today.getFullYear();
                 item.paidAt = `${dd}/${mm}/${yyyy}`;
             }
-            window.saveDataToFirebase();
+            window.saveActiveCategory();
         };
 
         window.deleteBlock = function(uIdx, hIdx) {
             const activeCat = getActiveCat();
             activeCat.users[uIdx].history.splice(hIdx, 1);
-            window.saveDataToFirebase();
+            window.saveActiveCategory();
         };
 
         function render() {
             document.getElementById('admin-panel').classList.toggle('hidden', !isAdmin);
             document.getElementById('admin-btn').textContent = isAdmin ? "Cerrar Modo Admin" : "Acceso Admin";
 
+            // Renderizar navegación de pestañas con los documentos de "David"
             const catNav = document.getElementById('category-nav');
-            catNav.innerHTML = currentDb.categories.map(cat => `
-                <button onclick="switchCategory('${cat.id}')" class="px-4 py-2 rounded-xl text-sm font-medium transition ${cat.id === currentDb.activeCategory ? 'bg-slate-900 text-white shadow-sm' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'}">
-                    ${cat.name}
-                </button>
-            `).join('');
+            if (categoriesList.length === 0) {
+                catNav.innerHTML = `<span class="text-xs text-slate-400">Cargando datos de la colección David...</span>`;
+            } else {
+                catNav.innerHTML = categoriesList.map(cat => `
+                    <button onclick="switchCategory('${cat.id}')" class="px-4 py-2 rounded-xl text-sm font-medium transition ${cat.id === activeCategoryId ? 'bg-slate-900 text-white shadow-sm' : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'}">
+                        ${cat.name}
+                    </button>
+                `).join('');
+            }
 
             const activeCat = getActiveCat();
+            if (!activeCat) {
+                document.getElementById('current-category-title').textContent = "Buscando datos...";
+                document.getElementById('users-container').innerHTML = '';
+                return;
+            }
+
             document.getElementById('current-category-title').textContent = activeCat.name;
 
             const container = document.getElementById('users-container');
             container.innerHTML = '';
+
+            if (activeCat.users.length === 0) {
+                container.innerHTML = `<div class="bg-white p-8 rounded-2xl text-center text-slate-400 border border-slate-200">No hay usuarios agregados en este concepto todavía.</div>`;
+            }
 
             activeCat.users.forEach((user, userIdx) => {
                 let lastPaidIdx = -1;
@@ -272,12 +291,10 @@
                         <div class="font-medium text-slate-900 text-xl tracking-wide">${user.name}</div>
                         <div id="scroll-container-${userIdx}" class="overflow-x-auto w-full scroll-smooth hide-scroll px-1">
                             <div class="flex flex-col min-w-max">
-                                <!-- Línea de tiempo -->
                                 <div class="relative flex items-center mb-1">
                                     <div class="absolute left-14 right-14 top-1/2 -translate-y-1/2 h-[2px] bg-slate-200 z-0"></div>
                                     ${milestoneNodesHtml || '<span class="text-sm text-slate-400">Sin datos</span>'}
                                 </div>
-                                <!-- Tarjetas -->
                                 <div class="flex items-center gap-2.5">
                                     ${cardsHtml || '<span class="text-sm text-slate-400">Sin bloques</span>'}
                                 </div>
@@ -287,12 +304,14 @@
                 `;
             });
 
-            // Mueve automáticamente el Slider al final de la derecha
+            // Auto-scroll al final del slider
             setTimeout(() => {
-                activeCat.users.forEach((_, idx) => {
-                    const elScroll = document.getElementById(`scroll-container-${idx}`);
-                    if (elScroll) elScroll.scrollLeft = elScroll.scrollWidth;
-                });
+                if (activeCat && activeCat.users) {
+                    activeCat.users.forEach((_, idx) => {
+                        const elScroll = document.getElementById(`scroll-container-${idx}`);
+                        if (elScroll) elScroll.scrollLeft = elScroll.scrollWidth;
+                    });
+                }
             }, 50);
 
             if (isAdmin) {
@@ -309,7 +328,7 @@
         function renderUserEditor() {
             const editor = document.getElementById('user-editor');
             const activeCat = getActiveCat();
-            if (selectedUserIndex === null || !activeCat.users[selectedUserIndex]) {
+            if (selectedUserIndex === null || !activeCat || !activeCat.users[selectedUserIndex]) {
                 editor.classList.add('hidden');
                 return;
             }
@@ -371,25 +390,26 @@
             <div class="flex items-center justify-between">
                 <h1 id="current-category-title" class="text-3xl font-bold tracking-tight text-slate-900">Cargando...</h1>
             </div>
+            <!-- Pestañas automáticas desde la colección David -->
             <div id="category-nav" class="flex flex-wrap gap-2.5 pt-3 border-t border-slate-100"></div>
         </header>
 
         <div id="admin-panel" class="hidden bg-white p-6 rounded-2xl shadow-sm border border-slate-300 space-y-6">
             <div class="flex justify-between items-center border-b pb-3">
-                <h2 class="text-base font-semibold text-slate-800">⚙️ Panel de Administración Multiconcepto</h2>
+                <h2 class="text-base font-semibold text-slate-800">⚙️ Panel de Administración (Colección David)</h2>
             </div>
 
             <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-4">
-                <h3 class="font-medium text-sm text-slate-700 mb-2">Añadir Nuevo Concepto / Servicio (ej: Trastero, Netflix)</h3>
+                <h3 class="font-medium text-sm text-slate-700 mb-2">Añadir Nuevo Documento / Servicio a la colección David</h3>
                 <div class="flex gap-2.5">
-                    <input type="text" id="new-cat-name" placeholder="Nombre del concepto" class="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-300 focus:ring-1 focus:ring-slate-400 outline-none bg-white">
-                    <button onclick="addCategory()" class="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-900 transition">Crear Categoría</button>
+                    <input type="text" id="new-cat-name" placeholder="Ejemplo: Trastero" class="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-300 focus:ring-1 focus:ring-slate-400 outline-none bg-white">
+                    <button onclick="addCategory()" class="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-900 transition">Crear Documento</button>
                 </div>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div class="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                    <h3 class="font-medium text-sm text-slate-700 mb-2">1. Crear Período en esta Categoría</h3>
+                    <h3 class="font-medium text-sm text-slate-700 mb-2">1. Lanzar Período en esta Pestaña</h3>
                     <div class="flex gap-2.5">
                         <input type="text" id="cycle-name" placeholder="Ej: Marzo 2026" class="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-300 focus:ring-1 focus:ring-slate-400 outline-none bg-white">
                         <button onclick="addGlobalCycle()" class="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-900 transition">Lanzar</button>
@@ -397,7 +417,7 @@
                 </div>
 
                 <div class="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                    <h3 class="font-medium text-sm text-slate-700 mb-2">2. Alta de Persona / Inquilino</h3>
+                    <h3 class="font-medium text-sm text-slate-700 mb-2">2. Añadir Persona / Inquilino</h3>
                     <div class="flex gap-2.5">
                         <input type="text" id="new-user-name" placeholder="Nombre" class="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-300 focus:ring-1 focus:ring-slate-400 outline-none bg-white">
                         <button onclick="addUser()" class="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-900 transition">Añadir</button>
